@@ -1,5 +1,7 @@
 import itertools as _itertools
 
+STARTED, FINISHED_WITH_SUCCESS, FINISHED_WITH_ERROR = 0, -1, -2
+
 
 def chunk(nb_item, nb_chunks, start_offset=0):
     """

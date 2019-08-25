@@ -1,42 +1,16 @@
 from pathlib import Path
 import pandas as pd
-from multiprocessing import Manager
-from pathos.multiprocessing import ProcessingPool
-from tempfile import NamedTemporaryFile
-from .utils import chunk
 
-DIR = '/dev/shm'
-PREFIX = 'pandarallel_'
-SUFFIX_REQUEST = '_request.pkl'
-SUFFIX_RESULT = '_result.pkl'
-
-STARTED, FINISHED_WITH_SUCCESS, FINISHED_WITH_ERROR = 0, -1, -2
+from .utils import chunk, STARTED, FINISHED_WITH_ERROR, FINISHED_WITH_SUCCESS
 
 
 class DataFrame:
     @staticmethod
-    def worker_apply(args):
-        index, req_file_name, res_file_name, queue, func, args, kwargs = args
-
-        try:
-            df = pd.read_pickle(req_file_name)
-
-            queue.put_nowait((index, STARTED))
-
-            axis = kwargs.get("axis", 0)
-
-            if axis == 1:
-                res = df.apply(func, *args, **kwargs)
-            else:
-                raise NotImplementedError
-
-            res.to_pickle(res_file_name)
-
-        except:
-            queue.put_nowait((index, FINISHED_WITH_ERROR))
-            raise
-
-        queue.put_nowait((index, FINISHED_WITH_SUCCESS))
+    def reduce(result_files):
+        return pd.concat([
+            pd.read_pickle(result_file.name)
+            for result_file in result_files
+        ], copy=False)
 
     @staticmethod
     def apply_amap(nb_workers, request_files, result_files, pool, queue,
@@ -59,61 +33,60 @@ class DataFrame:
                         for index, (request_file, result_file)
                         in enumerate(zip(request_files, result_files))]
 
-        return pool.amap(DataFrame.worker_apply, workers_args)
+        return pool.amap(DataFrame.apply_worker, workers_args)
 
     @staticmethod
-    def apply_reduce(result_files):
-        return pd.concat([
-            pd.read_pickle(result_file.name)
-            for result_file in result_files
-        ], copy=False)
+    def apply_worker(worker_args):
+        (index, req_file_name, res_file_name, queue,
+         func, args, kwargs) = worker_args
+
+        try:
+            df = pd.read_pickle(req_file_name)
+            queue.put_nowait((index, STARTED))
+            axis = kwargs.get("axis", 0)
+
+            if axis == 1:
+                res = df.apply(func, *args, **kwargs)
+            else:
+                raise NotImplementedError
+
+            res.to_pickle(res_file_name)
+
+        except:
+            queue.put_nowait((index, FINISHED_WITH_ERROR))
+            raise
+
+        queue.put_nowait((index, FINISHED_WITH_SUCCESS))
 
     @staticmethod
-    def apply(nb_workers):
-        def wrapper(amap, reduce):
-            def closure(df, func, *args, **kwargs):
-                pool = ProcessingPool(nb_workers)
-                manager = Manager()
-                queue = manager.Queue()
+    def applymap_amap(nb_workers, request_files, result_files, pool, queue,
+                      df, func, *args, **kwargs):
+        chunks = chunk(df.shape[0], nb_workers)
 
-                finished_workers = [False] * nb_workers
+        for index, chunk_ in enumerate(chunks):
+            df[chunk_].to_pickle(request_files[index].name)
 
-                request_files = [NamedTemporaryFile(dir=DIR,
-                                                    prefix=PREFIX,
-                                                    suffix=SUFFIX_REQUEST)
-                                 for _ in range(nb_workers)]
+        workers_args = [(index, request_file.name, result_file.name, queue,
+                         func)
+                        for index, (request_file, result_file)
+                        in enumerate(zip(request_files, result_files))]
 
-                result_files = [NamedTemporaryFile(dir=DIR,
-                                                   prefix=PREFIX,
-                                                   suffix=SUFFIX_RESULT)
-                                for _ in range(nb_workers)]
+        return pool.amap(DataFrame.applymap_worker, workers_args)
 
-                try:
-                    results = amap(nb_workers, request_files, result_files,
-                                   pool, queue, df,
-                                   func, *args, **kwargs)
+    @staticmethod
+    def applymap_worker(worker_args):
+        index, req_file_name, res_file_name, queue, func = worker_args
 
-                    while not all(finished_workers):
-                        index, status = queue.get()
+        try:
+            df = pd.read_pickle(req_file_name)
+            queue.put_nowait((index, STARTED))
 
-                        if status is STARTED:
-                            request_files[index].close()
-                        elif status is FINISHED_WITH_SUCCESS:
-                            finished_workers[index] = True
-                        elif status is FINISHED_WITH_ERROR:
-                            # TODO: Find something to stop all workers as soon as
-                            #       an exception is raised on one of the workers
-                            finished_workers[index] = True
+            res = df.applymap(func)
 
-                    # This method call is here only to forward potential worker
-                    # exception to the user
-                    results.get()
+            res.to_pickle(res_file_name)
 
-                    return reduce(result_files)
+        except:
+            queue.put_nowait((index, FINISHED_WITH_ERROR))
+            raise
 
-                finally:
-                    for file in request_files + result_files:
-                        file.close()
-
-            return closure
-        return wrapper(DataFrame.apply_amap, DataFrame.apply_reduce)
+        queue.put_nowait((index, FINISHED_WITH_SUCCESS))
