@@ -1,189 +1,112 @@
-from time import time
-from ctypes import c_double, c_uint64
-from multiprocessing import Manager
-import pyarrow.plasma as plasma
+from pathlib import Path
 import pandas as pd
+from multiprocessing import Manager
 from pathos.multiprocessing import ProcessingPool
-from .utils import (parallel, chunk, ProgressBarsConsole,
-                    ProgressBarsNotebookLab)
+from tempfile import NamedTemporaryFile
+from .utils import chunk
 
-REFRESH_PROGRESS_TIME = 0.25  # s
+DIR = '/dev/shm'
+PREFIX = 'pandarallel_'
+SUFFIX_REQUEST = '_request.pkl'
+SUFFIX_RESULT = '_result.pkl'
+
+STARTED, FINISHED_WITH_SUCCESS, FINISHED_WITH_ERROR = 0, -1, -2
 
 
 class DataFrame:
     @staticmethod
-    def worker_apply(worker_args):
-        (plasma_store_name, object_id, axis_chunk, func, progress_bar, queue,
-         index, args, kwargs) = worker_args
+    def worker_apply(args):
+        index, req_file_name, res_file_name, queue, func, args, kwargs = args
 
-        client = plasma.connect(plasma_store_name)
-        df = client.get(object_id)
+        try:
+            df = pd.read_pickle(req_file_name)
 
-        counter = c_uint64(0)
-        last_push_time = c_double(time())
+            queue.put_nowait((index, STARTED))
 
-        def with_progress(func):
-            def decorator(*args, **kwargs):
-                counter.value += 1
+            axis = kwargs.get("axis", 0)
 
-                cur_time = time()
+            if axis == 1:
+                res = df.apply(func, *args, **kwargs)
+            else:
+                raise NotImplementedError
 
-                if cur_time - last_push_time.value >= REFRESH_PROGRESS_TIME:
-                    queue.put_nowait((index, counter.value, False))
-                    last_push_time.value = cur_time
+            res.to_pickle(res_file_name)
 
-                return func(*args, **kwargs)
+        except:
+            queue.put_nowait((index, FINISHED_WITH_ERROR))
+            raise
 
-            return decorator
-
-        axis = kwargs.get("axis", 0)
-        func_to_apply = with_progress(func) if progress_bar else func
-
-        if axis == 1:
-            res = df[axis_chunk].apply(func_to_apply, *args, **kwargs)
-        else:
-            chunk = slice(0, df.shape[0]), df.columns[axis_chunk]
-            res = df.loc[chunk].apply(func_to_apply, *args, **kwargs)
-
-        if progress_bar:
-            queue.put((index, counter.value, True))
-
-        return client.put(res)
+        queue.put_nowait((index, FINISHED_WITH_SUCCESS))
 
     @staticmethod
-    def apply(plasma_store_name, nb_workers, plasma_client,
-              display_progress_bar, in_notebook_lab):
-        @parallel(plasma_client)
+    def apply(nb_workers):
         def closure(df, func, *args, **kwargs):
             pool = ProcessingPool(nb_workers)
             manager = Manager()
             queue = manager.Queue()
 
-            ProgressBars = (ProgressBarsNotebookLab if in_notebook_lab
-                            else ProgressBarsConsole)
+            finished_workers = [False] * nb_workers
 
-            axis = kwargs.get("axis", 0)
-            if axis == 'index':
-                axis = 0
-            elif axis == 'columns':
-                axis = 1
+            request_files = [NamedTemporaryFile(dir=DIR,
+                                                prefix=PREFIX,
+                                                suffix=SUFFIX_REQUEST)
+                             for _ in range(nb_workers)]
 
-            opposite_axis = 1 - axis
-            chunks = chunk(df.shape[opposite_axis], nb_workers)
+            result_files = [NamedTemporaryFile(dir=DIR,
+                                               prefix=PREFIX,
+                                               suffix=SUFFIX_RESULT)
+                            for _ in range(nb_workers)]
 
-            maxs = [chunk.stop - chunk.start for chunk in chunks]
-            values = [0] * nb_workers
-            finished = [False] * nb_workers
+            try:
+                axis = kwargs.get("axis", 0)
+                if axis == 'index':
+                    axis = 0
+                elif axis == 'columns':
+                    axis = 1
 
-            if display_progress_bar:
-                progress_bar = ProgressBars(maxs)
+                opposite_axis = 1 - axis
+                chunks = chunk(df.shape[opposite_axis], nb_workers)
 
-            object_id = plasma_client.put(df)
+                for index, chunk_ in enumerate(chunks):
+                    df[chunk_].to_pickle(request_files[index].name)
 
-            workers_args = [(plasma_store_name, object_id, chunk, func,
-                             display_progress_bar, queue, index, args, kwargs)
-                            for index, chunk in enumerate(chunks)]
+                workers_args = [(index,
+                                 request_file.name, result_file.name, queue,
+                                 func, args, kwargs)
+                                for index, (request_file, result_file)
+                                in enumerate(zip(request_files, result_files))]
 
-            result_workers = pool.amap(DataFrame.worker_apply, workers_args)
+                results = pool.amap(DataFrame.worker_apply, workers_args)
 
-            if display_progress_bar:
-                while not all(finished):
-                    for _ in range(finished.count(False)):
-                        index, value, status = queue.get()
-                        values[index] = value
-                        finished[index] = status
+                while not all(finished_workers):
+                    index, status = queue.get()
 
-                    progress_bar.update(values)
+                    if status is STARTED:
+                        request_files[index].close()
+                    elif status is FINISHED_WITH_SUCCESS:
+                        finished_workers[index] = True
+                    elif status is FINISHED_WITH_ERROR:
+                        # TODO: Find something to stop all workers as soon as
+                        #       an exception is raised on one of the workers
+                        finished_workers[index] = True
 
-            result = pd.concat([
-                plasma_client.get(result_worker)
-                for result_worker in result_workers.get()
-            ], copy=False)
+                # This method call is here only to forward potential worker
+                # exception to the user
+                results.get()
 
-            return result
+                result = pd.concat([
+                    pd.read_pickle(result_file.name)
+                    for result_file in result_files
+                ], copy=False)
+
+                return result
+
+            finally:
+                for file in request_files + result_files:
+                    file.close()
+
         return closure
 
     @staticmethod
-    def worker_applymap(worker_args):
-        (plasma_store_name, object_id, axis_chunk, func,
-         progress_bar, queue, index) = worker_args
-
-        client = plasma.connect(plasma_store_name)
-        df = client.get(object_id)
-        nb_columns_1 = df.shape[1] + 1
-
-        counter = c_uint64(0)
-        last_push_time = c_double(time())
-
-        def with_progress(func):
-            def decorator(arg):
-                counter.value += 1
-
-                cur_time = time()
-
-                if(cur_time - last_push_time.value >= REFRESH_PROGRESS_TIME):
-                    if(counter.value % nb_columns_1 == 0):
-                        queue.put_nowait((index,
-                                          counter.value // nb_columns_1,
-                                          False))
-                        last_push_time.value = cur_time
-
-                return func(arg)
-
-            return decorator
-
-        func_to_apply = with_progress(func) if progress_bar else func
-
-        res = df[axis_chunk].applymap(func_to_apply)
-
-        if progress_bar:
-            row_counter = counter.value // nb_columns_1
-            queue.put((index, row_counter, True))
-
-        return client.put(res)
-
-    @staticmethod
-    def applymap(plasma_store_name, nb_workers, plasma_client,
-                 display_progress_bar, in_notebook_lab):
-        @parallel(plasma_client)
-        def closure(df, func):
-            pool = ProcessingPool(nb_workers)
-            manager = Manager()
-            queue = manager.Queue()
-
-            ProgressBars = (ProgressBarsNotebookLab if in_notebook_lab
-                            else ProgressBarsConsole)
-
-            chunks = chunk(df.shape[0], nb_workers)
-
-            maxs = [chunk.stop - chunk.start for chunk in chunks]
-            values = [0] * nb_workers
-            finished = [False] * nb_workers
-
-            if display_progress_bar:
-                progress_bar = ProgressBars(maxs)
-
-            object_id = plasma_client.put(df)
-
-            worker_args = [(plasma_store_name, object_id, chunk, func,
-                            display_progress_bar, queue, index)
-                           for index, chunk in enumerate(chunks)]
-
-            result_workers = pool.amap(DataFrame.worker_applymap, worker_args)
-
-            if display_progress_bar:
-                while not all(finished):
-                    for _ in range(finished.count(False)):
-                        index, value, status = queue.get()
-                        values[index] = value
-                        finished[index] = status
-
-                    progress_bar.update(values)
-
-            result = pd.concat([
-                plasma_client.get(result_worker)
-                for result_worker in result_workers.get()
-            ], copy=False)
-
-            return result
-        return closure
+    def worker_applymap(args):
+        index, req_file_name, res_file_name, queue, func = args
