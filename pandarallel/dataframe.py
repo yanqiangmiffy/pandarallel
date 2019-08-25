@@ -39,74 +39,81 @@ class DataFrame:
         queue.put_nowait((index, FINISHED_WITH_SUCCESS))
 
     @staticmethod
-    def apply(nb_workers):
-        def closure(df, func, *args, **kwargs):
-            pool = ProcessingPool(nb_workers)
-            manager = Manager()
-            queue = manager.Queue()
+    def apply_amap(nb_workers, request_files, result_files, pool, queue,
+                   df, func, *args, **kwargs):
+        axis = kwargs.get("axis", 0)
+        if axis == 'index':
+            axis = 0
+        elif axis == 'columns':
+            axis = 1
 
-            finished_workers = [False] * nb_workers
+        opposite_axis = 1 - axis
+        chunks = chunk(df.shape[opposite_axis], nb_workers)
 
-            request_files = [NamedTemporaryFile(dir=DIR,
-                                                prefix=PREFIX,
-                                                suffix=SUFFIX_REQUEST)
-                             for _ in range(nb_workers)]
+        for index, chunk_ in enumerate(chunks):
+            df[chunk_].to_pickle(request_files[index].name)
 
-            result_files = [NamedTemporaryFile(dir=DIR,
-                                               prefix=PREFIX,
-                                               suffix=SUFFIX_RESULT)
-                            for _ in range(nb_workers)]
+        workers_args = [(index,
+                         request_file.name, result_file.name, queue,
+                         func, args, kwargs)
+                        for index, (request_file, result_file)
+                        in enumerate(zip(request_files, result_files))]
 
-            try:
-                axis = kwargs.get("axis", 0)
-                if axis == 'index':
-                    axis = 0
-                elif axis == 'columns':
-                    axis = 1
-
-                opposite_axis = 1 - axis
-                chunks = chunk(df.shape[opposite_axis], nb_workers)
-
-                for index, chunk_ in enumerate(chunks):
-                    df[chunk_].to_pickle(request_files[index].name)
-
-                workers_args = [(index,
-                                 request_file.name, result_file.name, queue,
-                                 func, args, kwargs)
-                                for index, (request_file, result_file)
-                                in enumerate(zip(request_files, result_files))]
-
-                results = pool.amap(DataFrame.worker_apply, workers_args)
-
-                while not all(finished_workers):
-                    index, status = queue.get()
-
-                    if status is STARTED:
-                        request_files[index].close()
-                    elif status is FINISHED_WITH_SUCCESS:
-                        finished_workers[index] = True
-                    elif status is FINISHED_WITH_ERROR:
-                        # TODO: Find something to stop all workers as soon as
-                        #       an exception is raised on one of the workers
-                        finished_workers[index] = True
-
-                # This method call is here only to forward potential worker
-                # exception to the user
-                results.get()
-
-                result = pd.concat([
-                    pd.read_pickle(result_file.name)
-                    for result_file in result_files
-                ], copy=False)
-
-                return result
-
-            finally:
-                for file in request_files + result_files:
-                    file.close()
-
-        return closure
+        return pool.amap(DataFrame.worker_apply, workers_args)
 
     @staticmethod
-    def worker_applymap(args):
-        index, req_file_name, res_file_name, queue, func = args
+    def apply_reduce(result_files):
+        return pd.concat([
+            pd.read_pickle(result_file.name)
+            for result_file in result_files
+        ], copy=False)
+
+    @staticmethod
+    def apply(nb_workers):
+        def wrapper(amap, reduce):
+            def closure(df, func, *args, **kwargs):
+                pool = ProcessingPool(nb_workers)
+                manager = Manager()
+                queue = manager.Queue()
+
+                finished_workers = [False] * nb_workers
+
+                request_files = [NamedTemporaryFile(dir=DIR,
+                                                    prefix=PREFIX,
+                                                    suffix=SUFFIX_REQUEST)
+                                 for _ in range(nb_workers)]
+
+                result_files = [NamedTemporaryFile(dir=DIR,
+                                                   prefix=PREFIX,
+                                                   suffix=SUFFIX_RESULT)
+                                for _ in range(nb_workers)]
+
+                try:
+                    results = amap(nb_workers, request_files, result_files,
+                                   pool, queue, df,
+                                   func, *args, **kwargs)
+
+                    while not all(finished_workers):
+                        index, status = queue.get()
+
+                        if status is STARTED:
+                            request_files[index].close()
+                        elif status is FINISHED_WITH_SUCCESS:
+                            finished_workers[index] = True
+                        elif status is FINISHED_WITH_ERROR:
+                            # TODO: Find something to stop all workers as soon as
+                            #       an exception is raised on one of the workers
+                            finished_workers[index] = True
+
+                    # This method call is here only to forward potential worker
+                    # exception to the user
+                    results.get()
+
+                    return reduce(result_files)
+
+                finally:
+                    for file in request_files + result_files:
+                        file.close()
+
+            return closure
+        return wrapper(DataFrame.apply_amap, DataFrame.apply_reduce)

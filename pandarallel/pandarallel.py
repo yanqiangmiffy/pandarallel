@@ -44,4 +44,3 @@ can lead to a considerable performance loss.")
         print("Pandarallel will run on", nb_workers, "workers")
 
         pd.DataFrame.parallel_apply = DataFrame.apply(nb_workers)
-        pd.DataFrame.parallel_applymap = DataFrame.apply(nb_workers)
