@@ -5,7 +5,7 @@ from .utils import (chunk, worker,
                     STARTED, FINISHED_WITH_ERROR, FINISHED_WITH_SUCCESS)
 
 
-class DataFrame:
+class Series:
     @staticmethod
     def reduce(result_files):
         return pd.concat([
@@ -15,27 +15,15 @@ class DataFrame:
 
     @staticmethod
     def apply_amap(nb_workers, request_files, result_files, pool, queue,
-                   df, func, *args, **kwargs):
+                   series, func, *args, **kwargs):
 
-        def apply(df, func, *args, **kwargs):
-            axis = kwargs.get("axis", 0)
+        def apply(series, func, *args, **kwargs):
+            return series.apply(func, *args, **kwargs)
 
-            if axis == 1:
-                return df.apply(func, *args, **kwargs)
-            else:
-                raise NotImplementedError
-
-        axis = kwargs.get("axis", 0)
-        if axis == 'index':
-            axis = 0
-        elif axis == 'columns':
-            axis = 1
-
-        opposite_axis = 1 - axis
-        chunks = chunk(df.shape[opposite_axis], nb_workers)
+        chunks = chunk(series.shape[0], nb_workers)
 
         for index, chunk_ in enumerate(chunks):
-            df[chunk_].to_pickle(request_files[index].name)
+            series[chunk_].to_pickle(request_files[index].name)
 
         workers_args = [(index, req_file.name, res_file.name, queue,
                          func, args, kwargs)
@@ -45,20 +33,20 @@ class DataFrame:
         return pool.amap(worker(apply), workers_args)
 
     @staticmethod
-    def applymap_amap(nb_workers, request_files, result_files, pool, queue,
-                      df, func, *args, **kwargs):
+    def map_amap(nb_workers, request_files, result_files, pool, queue,
+                 series, func, *args, **kwargs):
 
-        def applymap(df, func, *_1, **_2):
-            return df.applymap(func)
+        def map(series, func, *_1, **_2):
+            return series.map(func)
 
-        chunks = chunk(df.shape[0], nb_workers)
+        chunks = chunk(series.shape[0], nb_workers)
 
         for index, chunk_ in enumerate(chunks):
-            df[chunk_].to_pickle(request_files[index].name)
+            series[chunk_].to_pickle(request_files[index].name)
 
         workers_args = [(index, req_file.name, res_file.name, queue,
                          func, args, kwargs)
                         for index, (req_file, res_file)
                         in enumerate(zip(request_files, result_files))]
 
-        return pool.amap(worker(applymap), workers_args)
+        return pool.amap(worker(map), workers_args)

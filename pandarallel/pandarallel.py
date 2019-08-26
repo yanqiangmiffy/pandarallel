@@ -6,6 +6,7 @@ from tempfile import NamedTemporaryFile
 
 from .utils import STARTED, FINISHED_WITH_ERROR, FINISHED_WITH_SUCCESS
 from .dataframe import DataFrame
+from .series import Series
 
 DIR = '/dev/shm'
 PREFIX = 'pandarallel_'
@@ -106,3 +107,11 @@ can lead to a considerable performance loss.")
         pd.DataFrame.parallel_applymap = wrapper(nb_workers,
                                                  DataFrame.applymap_amap,
                                                  DataFrame.reduce)
+
+        pd.Series.parallel_apply = wrapper(nb_workers,
+                                           Series.apply_amap,
+                                           Series.reduce)
+
+        pd.Series.parallel_map = wrapper(nb_workers,
+                                         Series.map_amap,
+                                         Series.reduce)
