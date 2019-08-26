@@ -1,7 +1,8 @@
 from pathlib import Path
 import pandas as pd
 
-from .utils import chunk, STARTED, FINISHED_WITH_ERROR, FINISHED_WITH_SUCCESS
+from .utils import (chunk, STARTED, FINISHED_WITH_ERROR, FINISHED_WITH_SUCCESS,
+                    worker)
 
 
 class DataFrame:
@@ -15,6 +16,15 @@ class DataFrame:
     @staticmethod
     def apply_amap(nb_workers, request_files, result_files, pool, queue,
                    df, func, *args, **kwargs):
+
+        def apply(df, func, *args, **kwargs):
+            axis = kwargs.get("axis", 0)
+
+            if axis == 1:
+                return df.apply(func, *args, **kwargs)
+            else:
+                raise NotImplementedError
+
         axis = kwargs.get("axis", 0)
         if axis == 'index':
             axis = 0
@@ -27,66 +37,28 @@ class DataFrame:
         for index, chunk_ in enumerate(chunks):
             df[chunk_].to_pickle(request_files[index].name)
 
-        workers_args = [(index,
-                         request_file.name, result_file.name, queue,
+        workers_args = [(index, req_file.name, res_file.name, queue,
                          func, args, kwargs)
-                        for index, (request_file, result_file)
+                        for index, (req_file, res_file)
                         in enumerate(zip(request_files, result_files))]
 
-        return pool.amap(DataFrame.apply_worker, workers_args)
-
-    @staticmethod
-    def apply_worker(worker_args):
-        (index, req_file_name, res_file_name, queue,
-         func, args, kwargs) = worker_args
-
-        try:
-            df = pd.read_pickle(req_file_name)
-            queue.put_nowait((index, STARTED))
-            axis = kwargs.get("axis", 0)
-
-            if axis == 1:
-                res = df.apply(func, *args, **kwargs)
-            else:
-                raise NotImplementedError
-
-            res.to_pickle(res_file_name)
-
-        except:
-            queue.put_nowait((index, FINISHED_WITH_ERROR))
-            raise
-
-        queue.put_nowait((index, FINISHED_WITH_SUCCESS))
+        return pool.amap(worker(apply), workers_args)
 
     @staticmethod
     def applymap_amap(nb_workers, request_files, result_files, pool, queue,
                       df, func, *args, **kwargs):
+
+        def applymap(df, func, *_1, **_2):
+            return df.applymap(func)
+
         chunks = chunk(df.shape[0], nb_workers)
 
         for index, chunk_ in enumerate(chunks):
             df[chunk_].to_pickle(request_files[index].name)
 
-        workers_args = [(index, request_file.name, result_file.name, queue,
-                         func)
-                        for index, (request_file, result_file)
+        workers_args = [(index, req_file.name, res_file.name, queue,
+                         func, args, kwargs)
+                        for index, (req_file, res_file)
                         in enumerate(zip(request_files, result_files))]
 
-        return pool.amap(DataFrame.applymap_worker, workers_args)
-
-    @staticmethod
-    def applymap_worker(worker_args):
-        index, req_file_name, res_file_name, queue, func = worker_args
-
-        try:
-            df = pd.read_pickle(req_file_name)
-            queue.put_nowait((index, STARTED))
-
-            res = df.applymap(func)
-
-            res.to_pickle(res_file_name)
-
-        except:
-            queue.put_nowait((index, FINISHED_WITH_ERROR))
-            raise
-
-        queue.put_nowait((index, FINISHED_WITH_SUCCESS))
+        return pool.amap(worker(applymap), workers_args)
