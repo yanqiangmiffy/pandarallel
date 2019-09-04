@@ -1,30 +1,43 @@
-from pathlib import Path
 import pandas as pd
+from pathos.multiprocessing import ProcessingPool
+import pickle
 
-from .utils import (chunk, worker,
-                    STARTED, FINISHED_WITH_ERROR, FINISHED_WITH_SUCCESS)
+from .utils import chunk
+
+
+def depickle_input_and_pickle_output(function):
+    def wrapper(worker_args):
+        pickled_df, func, args, kwargs = worker_args
+
+        df = pickle.loads(pickled_df)
+        del(pickled_df)
+
+        result = function(df, func, *args, **kwargs)
+
+        return pickle.dumps(result)
+
+    return wrapper
+
+
+def depickle(function):
+    def wrapper(pickled_results):
+        results = [pickle.loads(pickled_result)
+                   for pickled_result in pickled_results]
+        return function(results)
+    return wrapper
 
 
 class DataFrame:
     @staticmethod
-    def reduce(result_files):
+    @depickle
+    def reduce(results):
         return pd.concat([
-            pd.read_pickle(result_file.name)
-            for result_file in result_files
+            result
+            for result in results
         ], copy=False)
 
     @staticmethod
-    def apply_amap(nb_workers, request_files, result_files, pool, queue,
-                   df, func, *args, **kwargs):
-
-        def apply(df, func, *args, **kwargs):
-            axis = kwargs.get("axis", 0)
-
-            if axis == 1:
-                return df.apply(func, *args, **kwargs)
-            else:
-                raise NotImplementedError
-
+    def apply_chunk(nb_workers, df, *args, **kwargs):
         axis = kwargs.get("axis", 0)
         if axis == 'index':
             axis = 0
@@ -34,31 +47,23 @@ class DataFrame:
         opposite_axis = 1 - axis
         chunks = chunk(df.shape[opposite_axis], nb_workers)
 
-        for index, chunk_ in enumerate(chunks):
-            df[chunk_].to_pickle(request_files[index].name)
-
-        workers_args = [(index, req_file.name, res_file.name, queue,
-                         func, args, kwargs)
-                        for index, (req_file, res_file)
-                        in enumerate(zip(request_files, result_files))]
-
-        return pool.amap(worker(apply), workers_args)
+        return chunks
 
     @staticmethod
-    def applymap_amap(nb_workers, request_files, result_files, pool, queue,
-                      df, func, *args, **kwargs):
+    @depickle_input_and_pickle_output
+    def apply_worker(df, func, *args, **kwargs):
+        axis = kwargs.get("axis", 0)
 
-        def applymap(df, func, *_1, **_2):
-            return df.applymap(func)
+        if axis == 1:
+            return df.apply(func, *args, **kwargs)
+        else:
+            raise NotImplementedError
 
-        chunks = chunk(df.shape[0], nb_workers)
+    @staticmethod
+    def applymap_chunk(nb_workers, df, *_):
+        return chunk(df.shape[0], nb_workers)
 
-        for index, chunk_ in enumerate(chunks):
-            df[chunk_].to_pickle(request_files[index].name)
-
-        workers_args = [(index, req_file.name, res_file.name, queue,
-                         func, args, kwargs)
-                        for index, (req_file, res_file)
-                        in enumerate(zip(request_files, result_files))]
-
-        return pool.amap(worker(applymap), workers_args)
+    @staticmethod
+    @depickle_input_and_pickle_output
+    def applymap_worker(df, func, *_):
+        return df.applymap(func)

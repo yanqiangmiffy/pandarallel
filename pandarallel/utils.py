@@ -61,19 +61,8 @@ def chunk(nb_item, nb_chunks, start_offset=0):
 
 def worker(function):
     def closure(worker_args):
-        (index, req_file_name, res_file_name, queue,
-            func, args, kwargs) = worker_args
+        (data, func, args, kwargs) = worker_args
 
-        try:
-            df = pd.read_pickle(req_file_name)
-            queue.put_nowait((index, STARTED))
-
-            function(df, func, *args, **kwargs).to_pickle(res_file_name)
-
-        except:
-            queue.put_nowait((index, FINISHED_WITH_ERROR))
-            raise
-
-        queue.put_nowait((index, FINISHED_WITH_SUCCESS))
+        return function(data, func, *args, **kwargs)
 
     return closure
