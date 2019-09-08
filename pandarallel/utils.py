@@ -68,14 +68,15 @@ def worker(function):
 
     return closure
 
+
 def depickle_input_and_pickle_output(function):
     def wrapper(worker_args):
-        pickled_df, func, args, kwargs = worker_args
+        pickled_data, index, meta_args, func, args, kwargs = worker_args
 
-        df = pickle.loads(pickled_df)
-        del(pickled_df)
+        data = pickle.loads(pickled_data)
+        del(pickled_data)
 
-        result = function(df, func, *args, **kwargs)
+        result = function(data, index, meta_args, func, *args, **kwargs)
 
         return pickle.dumps(result)
 
