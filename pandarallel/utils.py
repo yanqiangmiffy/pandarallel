@@ -1,5 +1,6 @@
 import itertools as _itertools
 import pandas as pd
+import pickle
 
 STARTED, FINISHED_WITH_SUCCESS, FINISHED_WITH_ERROR = 0, -1, -2
 
@@ -66,3 +67,24 @@ def worker(function):
         return function(data, func, *args, **kwargs)
 
     return closure
+
+def depickle_input_and_pickle_output(function):
+    def wrapper(worker_args):
+        pickled_df, func, args, kwargs = worker_args
+
+        df = pickle.loads(pickled_df)
+        del(pickled_df)
+
+        result = function(df, func, *args, **kwargs)
+
+        return pickle.dumps(result)
+
+    return wrapper
+
+
+def depickle(function):
+    def wrapper(pickled_results):
+        results = [pickle.loads(pickled_result)
+                   for pickled_result in pickled_results]
+        return function(results)
+    return wrapper
