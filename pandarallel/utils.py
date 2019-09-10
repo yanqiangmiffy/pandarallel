@@ -84,8 +84,8 @@ def depickle_input_and_pickle_output(function):
 
 
 def depickle(function):
-    def wrapper(pickled_results):
+    def wrapper(pickled_results, meta_args):
         results = [pickle.loads(pickled_result)
                    for pickled_result in pickled_results]
-        return function(results)
+        return function(results, meta_args)
     return wrapper

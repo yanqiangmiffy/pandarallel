@@ -5,12 +5,13 @@ from pandarallel.utils import chunk, depickle, depickle_input_and_pickle_output
 class Series:
     @staticmethod
     @depickle
-    def reduce(results):
+    def reduce(results, _):
         return pd.concat(results, copy=False)
 
     @staticmethod
-    def chunk(nb_workers, series, *args, **kwargs):
-        return chunk(series.size, nb_workers)
+    def get_chunks(nb_workers, series, *args, **kwargs):
+        for chunk_ in chunk(series.size, nb_workers):
+            yield series[chunk_]
 
     class Apply:
         @staticmethod

@@ -95,37 +95,39 @@ def test_series_apply(pandarallel_init):
                                        bias=3)
     assert res.equals(res_parallel)
 
-# def test_series_rolling_apply(pandarallel_init):
-#     df_size = int(1e2)
-#     df = pd.DataFrame(dict(a=np.random.randint(1, 8, df_size),
-#                       b=list(range(df_size))))
 
-#     res = df.b.rolling(4).apply(func_for_series_rolling_apply, raw=False)
-#     res_parallel = df.b.rolling(4).parallel_apply(func_for_series_rolling_apply,
-#                                                   raw=False)
+def test_series_rolling_apply(pandarallel_init):
+    df_size = int(1e2)
+    df = pd.DataFrame(dict(a=np.random.randint(1, 8, df_size),
+                           b=list(range(df_size))))
 
-#     assert res.equals(res_parallel)
+    res = df.b.rolling(4).apply(func_for_series_rolling_apply, raw=False)
+    res_parallel = df.b.rolling(4).parallel_apply(func_for_series_rolling_apply,
+                                                  raw=False)
 
-# def test_dataframe_groupby_apply(pandarallel_init):
-#     df_size = int(1e1)
-#     df = pd.DataFrame(dict(a=np.random.randint(1, 8, df_size),
-#                            b=np.random.rand(df_size),
-#                            c=np.random.rand(df_size)))
+    assert res.equals(res_parallel)
 
-#     res = df.groupby("a").apply(func_for_dataframe_groupby_apply)
-#     res_parallel = (df.groupby("a")
-#                       .parallel_apply(func_for_dataframe_groupby_apply))
-#     res.equals(res_parallel)
 
-#     res = df.groupby(["a"]).apply(func_for_dataframe_groupby_apply)
-#     res_parallel = (df.groupby(["a"])
-#                       .parallel_apply(func_for_dataframe_groupby_apply))
-#     res.equals(res_parallel)
+def test_dataframe_groupby_apply(pandarallel_init):
+    df_size = int(1e1)
+    df = pd.DataFrame(dict(a=np.random.randint(1, 8, df_size),
+                           b=np.random.rand(df_size),
+                           c=np.random.rand(df_size)))
 
-#     res = df.groupby(["a", "b"]).apply(func_for_dataframe_groupby_apply)
-#     res_parallel = (df.groupby(["a", "b"])
-#                       .parallel_apply(func_for_dataframe_groupby_apply))
-#     res.equals(res_parallel)
+    res = df.groupby("a").apply(func_for_dataframe_groupby_apply)
+    res_parallel = (df.groupby("a")
+                      .parallel_apply(func_for_dataframe_groupby_apply))
+    res.equals(res_parallel)
+
+    res = df.groupby(["a"]).apply(func_for_dataframe_groupby_apply)
+    res_parallel = (df.groupby(["a"])
+                      .parallel_apply(func_for_dataframe_groupby_apply))
+    res.equals(res_parallel)
+
+    res = df.groupby(["a", "b"]).apply(func_for_dataframe_groupby_apply)
+    res_parallel = (df.groupby(["a", "b"])
+                      .parallel_apply(func_for_dataframe_groupby_apply))
+    res.equals(res_parallel)
 
 # def test_dataframe_groupby_rolling_apply(pandarallel_init):
 #     df_size = int(1e2)

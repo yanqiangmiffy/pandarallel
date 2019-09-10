@@ -5,21 +5,20 @@ from pandarallel.utils import chunk, depickle, depickle_input_and_pickle_output
 class SeriesRolling:
     @staticmethod
     @depickle
-    def reduce(results):
+    def reduce(results, _):
         return pd.concat(results, copy=False)
 
     @staticmethod
-    def chunk(nb_workers, rolling, *args, **kwargs):
-        return chunk(rolling.obj.size, nb_workers, rolling.window)
+    def get_chunks(nb_workers, rolling, *args, **kwargs):
+        chunks = chunk(rolling.obj.size, nb_workers, rolling.window)
+
+        for chunk_ in chunks:
+            yield rolling.obj[chunk_]
 
     @staticmethod
     def attribute2value(rolling):
         return {attribute: getattr(rolling, attribute)
                 for attribute in rolling._attributes}
-
-    @staticmethod
-    def attr_to_chunk():
-        return "obj"
 
     @staticmethod
     @depickle_input_and_pickle_output
