@@ -2,13 +2,12 @@ from setuptools import setup, find_packages
 
 install_requires = [
     'pandas',
-    'pyarrow >= 0.12.1',
-    'pathos >= 0.2.4'
+    'dill',
 ]
 
 setup(
     name='pandarallel',
-    version='1.3.2',
+    version='1.3.3',
     python_requires='>=3.5',
     packages=find_packages(),
     author='Manu NALEPA',

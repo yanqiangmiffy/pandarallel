@@ -33,7 +33,7 @@
 
 ## Warning
 
-- Parallelization has a cost (instanciating new processes, sending data via shared memory, etc ...), so parallelization is efficiant only if the amount of calculation to parallelize is high enough. For very little amount of data, using parallezation not always worth it.
+- Parallelization has a cost (instanciating new processes, sending data between main process and workers, etc ...), so parallelization is efficiant only if the amount of calculation to parallelize is high enough. For very little amount of data, using parallezation not always worth it.
 
 ## Examples
 
@@ -68,18 +68,22 @@ pandarallel.initialize()
 
 This method takes 4 optional parameters:
 
-- `shm_size_mb`: The size of the Pandarallel shared memory in MB. If the
-  default one is too small, it is possible to set a larger one. By default,
-  it is set to 2 GB. (int)
 - `nb_workers`: The number of workers. By default, it is set to the number
   of cores your operating system sees. (int)
-- `progress_bar`: Put it to `True` to display a progress bar.
-- `verbose`: The verbosity level. > 1 display all logs - 1, display only
-  initialization logs - < 1 display no log (int)
+- `progress_bar`: Not working on this version
+- `verbose`: Not working on this version
+- `use_memory_fs_is_available`: If possible, use memory file system to tranfer
+  data to work on (dataframe, series...) between the main process and workers
+  instead of pipe.
 
-**WARNING**: Progress bar is an experimental feature. This can lead to a
-considerable performance loss.
-Not available for `DataFrameGroupy.parallel_apply`.
+  Setting this option to True reduce data transfer time between, especially for
+  big data.
+
+  This option has an impact only if the directory `/dev/shm` exists and if the
+  user has read an write rights on it. So basicaly this option only has an
+  impact on some Linux distributions (including Ubuntu). For all others
+  operating systems, standard multiprocessing data transfer (pipe) will be used
+  whatever its value.
 
 With `df` a pandas DataFrame, `series` a pandas Series, `func` a function to
 apply/map, `args1`, `args2` some arguments & `col_name` a column name:

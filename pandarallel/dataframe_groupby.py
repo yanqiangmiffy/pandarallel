@@ -1,63 +1,42 @@
-import pyarrow.plasma as plasma
-import pandas as pd
 import itertools
-from pathos.multiprocessing import ProcessingPool
-from .utils import parallel, chunk
+import pandas as pd
+from pandarallel.utils import chunk
 
 
 class DataFrameGroupBy:
     @staticmethod
-    def worker(worker_args):
-        (plasma_store_name, object_id, groups_id, chunk, func, args,
-         kwargs) = worker_args
+    def get_index(df_grouped):
+        if len(df_grouped.grouper.shape) == 1:
+            # One element in "by" argument
+            if type(df_grouped.keys) == list:
+                # "by" argument is a list with only one element
+                keys = df_grouped.keys[0]
+            else:
+                keys = df_grouped.keys
 
-        client = plasma.connect(plasma_store_name)
-        df = client.get(object_id)
-        groups = client.get(groups_id)[chunk]
-        result = [
-            func(df.iloc[indexes], *args, **kwargs)
-            for _, indexes in groups
-        ]
+            return pd.Series(list(df_grouped.grouper), name=keys)
 
-        return client.put(result)
+        # A list in "by" argument
+        return pd.MultiIndex.from_tuples(list(df_grouped.grouper),
+                                         names=df_grouped.keys)
 
     @staticmethod
-    def apply(plasma_store_name, nb_workers, plasma_client, _1, _2):
-        @parallel(plasma_client)
-        def closure(df_grouped, func, *args, **kwargs):
-            groups = list(df_grouped.groups.items())
-            chunks = chunk(len(groups), nb_workers)
-            object_id = plasma_client.put(df_grouped.obj)
-            groups_id = plasma_client.put(groups)
+    def reduce(results, index):
+        return pd.DataFrame(list(itertools.chain.from_iterable([
+            result
+            for result in results
+        ])),
+            index=index
+        ).squeeze()
 
-            workers_args = [(plasma_store_name, object_id, groups_id, chunk,
-                             func, args, kwargs) for chunk in chunks]
+    @staticmethod
+    def get_chunks(nb_workers, df_grouped, *args, **kwargs):
+        chunks = chunk(len(df_grouped), nb_workers)
+        iterator = iter(df_grouped)
 
-            with ProcessingPool(nb_workers) as pool:
-                result_workers = pool.map(
-                    DataFrameGroupBy.worker, workers_args)
+        for chunk_ in chunks:
+            yield [next(iterator) for _ in range(chunk_.stop - chunk_.start)]
 
-            if len(df_grouped.grouper.shape) == 1:
-                # One element in "by" argument
-                if type(df_grouped.keys) == list:
-                    # "by" argument is a list with only one element
-                    keys = df_grouped.keys[0]
-                else:
-                    keys = df_grouped.keys
-
-                index = pd.Series(list(df_grouped.grouper),
-                                  name=keys)
-
-            else:
-                # A list in "by" argument
-                index = pd.MultiIndex.from_tuples(list(df_grouped.grouper),
-                                                  names=df_grouped.keys)
-
-            result = pd.DataFrame(list(itertools.chain.from_iterable([
-                plasma_client.get(result_worker)
-                for result_worker in result_workers
-            ])),
-                index=index
-            ).squeeze()
-            return result
-        return closure
+    @staticmethod
+    def worker(tuples, _1, _2, func, *args, **kwargs):
+        return [func(df, *args, **kwargs) for _, df in tuples]
