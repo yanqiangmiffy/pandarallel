@@ -38,7 +38,7 @@ def is_memory_fs_available():
 def prepare_worker_memory_fs(function):
     def wrapper(worker_args):
 
-        (input_file_path, index, meta_args,
+        (input_file_path, output_file_path, index, meta_args,
          dilled_func, args, kwargs) = worker_args
 
         with open(input_file_path, 'rb') as file:
@@ -48,8 +48,10 @@ def prepare_worker_memory_fs(function):
             #       more
             os.remove(input_file_path)
 
-        return function(data, index, meta_args,
-                        dill.loads(dilled_func), *args, **kwargs)
+        result = function(data, index, meta_args,
+                          dill.loads(dilled_func), *args, **kwargs)
+        with open(output_file_path, 'wb') as file:
+            pickle.dump(result, file)
 
     return wrapper
 
@@ -92,20 +94,23 @@ def parallelize(nb_workers, use_memory_fs, get_chunks, worker, reduce,
                             for _ in range(nb_workers)]
 
             try:
-
                 for chunk, input_file in zip(chunks, input_files):
-
                     with open(input_file.name, 'wb') as file:
                         pickle.dump(chunk, file)
 
-                workers_args = [(input_file.name, index, worker_meta_args,
+                workers_args = [(input_file.name, output_file.name, index,
+                                 worker_meta_args,
                                  dill.dumps(func), args, kwargs)
-                                for index, input_file
-                                in enumerate(input_files)]
+                                for index, (input_file, output_file)
+                                in enumerate(zip(input_files, output_files))]
 
                 with Pool(nb_workers, worker_init,
                           (prepare_worker_memory_fs(worker),)) as pool:
-                    results = pool.map(global_worker, workers_args)
+                    pool.map(global_worker, workers_args)
+
+                results = [pickle.load(output_files)
+                           for output_files
+                           in output_files]
 
                 return reduce(results, reduce_meta_args)
 
