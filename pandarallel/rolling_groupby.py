@@ -17,7 +17,7 @@ class RollingGroupBy:
             yield [next(iterator) for _ in range(chunk_.stop - chunk_.start)]
 
     @staticmethod
-    def attribute2value(rolling):
+    def att2value(rolling):
         return {attribute: getattr(rolling, attribute)
                 for attribute in rolling._attributes}
 

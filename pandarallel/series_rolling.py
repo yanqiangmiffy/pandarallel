@@ -15,7 +15,7 @@ class SeriesRolling:
             yield rolling.obj[chunk_]
 
     @staticmethod
-    def attribute2value(rolling):
+    def att2value(rolling):
         return {attribute: getattr(rolling, attribute)
                 for attribute in rolling._attributes}
 

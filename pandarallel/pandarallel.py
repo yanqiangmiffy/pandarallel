@@ -1,16 +1,19 @@
 import dill
+from multiprocessing import Manager, Pool, cpu_count
 import os
-import pandas as pd
-from multiprocessing import Pool, cpu_count
-from tempfile import NamedTemporaryFile
+from pandas import DataFrame, Series
+from pandas.core.window import Rolling
+from pandas.core.groupby import DataFrameGroupBy
+from pandas.core.window import RollingGroupby
 import pickle
-
+from tempfile import NamedTemporaryFile
 
 from pandarallel.dataframe import DataFrame as DF
 from pandarallel.series import Series as S
 from pandarallel.series_rolling import SeriesRolling as SR
 from pandarallel.dataframe_groupby import DataFrameGroupBy as DFGB
 from pandarallel.rolling_groupby import RollingGroupBy as RGB
+from pandarallel.utils import ProgressBarsNotebookLab
 
 NB_WORKERS = cpu_count()
 PREFIX = 'pandarallel_'
@@ -18,6 +21,8 @@ PREFIX_INPUT = PREFIX + 'input_'
 PREFIX_OUTPUT = PREFIX + 'output_'
 SUFFIX = '.pickle'
 MEMORY_FS_ROOT = '/dev/shm'
+
+INPUT_FILE_READ, PROGRESSION, VALUE, ERROR = list(range(4))
 
 _func = None
 
@@ -35,113 +40,198 @@ def is_memory_fs_available():
     return os.path.exists(MEMORY_FS_ROOT)
 
 
-def prepare_worker_memory_fs(function):
-    def wrapper(worker_args):
+def prepare_worker(use_memory_fs):
+    def closure(function):
+        def wrapper(worker_args):
+            if use_memory_fs:
+                (input_file_path, output_file_path, index, meta_args, queue,
+                 dilled_func, args, kwargs) = worker_args
+                try:
+                    with open(input_file_path, 'rb') as file:
+                        data = pickle.load(file)
+                        queue.put((INPUT_FILE_READ, index))
 
-        (input_file_path, output_file_path, index, meta_args,
-         dilled_func, args, kwargs) = worker_args
+                    result = function(data, index, meta_args,
+                                      dill.loads(dilled_func), *args, **kwargs)
 
-        with open(input_file_path, 'rb') as file:
-            data = pickle.load(file)
+                    with open(output_file_path, 'wb') as file:
+                        pickle.dump(result, file)
 
-            # TODO: Find a better way to remove input file when not needed any
-            #       more
-            os.remove(input_file_path)
+                    queue.put((VALUE, index))
 
-        result = function(data, index, meta_args,
-                          dill.loads(dilled_func), *args, **kwargs)
-        with open(output_file_path, 'wb') as file:
-            pickle.dump(result, file)
+                except Exception:
+                    queue.put((ERROR, index))
+                    raise
+            else:
+                (data, index, meta_args, queue, dilled_func, args, kwargs) = \
+                    worker_args
 
-    return wrapper
+                try:
+                    result = function(data, index, meta_args,
+                                      dill.loads(dilled_func), *args, **kwargs)
 
+                    queue.put((VALUE, index))
 
-def dedill_func(function):
-    def wrapper(worker_args):
-        data, index, meta_args, dilled_func, args, kwargs = worker_args
-        return function(data, index, meta_args,
-                        dill.loads(dilled_func), *args, **kwargs)
+                    return result
 
-    return wrapper
-
-
-def worker(function):
-    def closure(worker_args):
-        (data, func, args, kwargs) = worker_args
-
-        return function(data, func, *args, **kwargs)
-
+                except Exception:
+                    queue.put((ERROR, index))
+                    raise
+        return wrapper
     return closure
 
 
-def parallelize(nb_workers, use_memory_fs, get_chunks, worker, reduce,
+def create_temp_files(nb_files):
+    return [NamedTemporaryFile(prefix=PREFIX_INPUT,
+                               suffix=SUFFIX,
+                               dir=MEMORY_FS_ROOT)
+            for _ in range(nb_files)]
+
+
+def wrap(progress_bar, index, queue, period):
+    def wrapper(func):
+        if progress_bar:
+            def closure(*args, **kwargs):
+                func.calls += 1
+
+                if func.calls % period == 0:
+                    queue.put_nowait((PROGRESSION, (index, func.calls)))
+
+                return func(*args, **kwargs)
+
+            func.calls = 0
+
+            return closure
+        return func
+    return wrapper
+
+
+def get_workers_args(use_memory_fs, nb_workers, progress_bar, chunks,
+                     worker_meta_args, queue,
+                     func, args, kwargs):
+
+    def dump_and_get_lenght(chunk, input_file):
+        with open(input_file.name, 'wb') as file:
+            pickle.dump(chunk, file)
+
+        return len(chunk)
+
+    if use_memory_fs:
+        input_files = create_temp_files(nb_workers)
+        output_files = create_temp_files(nb_workers)
+
+        chunk_lengths = [dump_and_get_lenght(chunk, input_file)
+                         for chunk, input_file
+                         in zip(chunks, input_files)]
+
+        workers_args = [(input_file.name, output_file.name, index,
+                         worker_meta_args, queue,
+                         dill.dumps(wrap(progress_bar, index, queue,
+                                         chunk_length // 100)(func)),
+                         args, kwargs)
+                        for index, (input_file, output_file, chunk_length)
+                        in enumerate(zip(input_files, output_files,
+                                         chunk_lengths))]
+
+        return workers_args, chunk_lengths, input_files, output_files
+
+    else:
+        workers_args, chunk_lengths = \
+            zip(*[((chunk, index, worker_meta_args, queue,
+                    dill.dumps(wrap(progress_bar, index, queue,
+                                    len(chunk) // 100)(func)),
+                    args, kwargs), len(chunk))
+                  for index, chunk in enumerate(chunks)])
+
+        return workers_args, chunk_lengths, [], []
+
+
+def get_workers_result(use_memory_fs, nb_workers, show_progress_bar, queue,
+                       chunk_lengths, input_files, output_files, map_result):
+
+    if show_progress_bar:
+        progress_bars = ProgressBarsNotebookLab(chunk_lengths)
+        progresses = [0] * nb_workers
+
+    finished_workers = [False] * nb_workers
+
+    generation = 0
+
+    while not all(finished_workers):
+        message_type, message = queue.get()
+
+        if message_type is INPUT_FILE_READ:
+            file_index = message
+            input_files[file_index].close()
+
+        elif message_type is PROGRESSION:
+            worker_index, progression = message
+            progresses[worker_index] = progression
+
+            if generation % nb_workers == 0:
+                progress_bars.update(progresses)
+
+            generation += 1
+
+        elif message_type is VALUE:
+            worker_index = message
+            finished_workers[worker_index] = VALUE
+
+            if show_progress_bar:
+                progress_bars.update(progresses)
+
+        elif message_type is ERROR:
+            worker_index = message
+            finished_workers[worker_index] = ERROR
+
+            if show_progress_bar:
+                progress_bars.set_error(worker_index)
+                progress_bars.update(progresses)
+
+    results = map_result.get()
+
+    return ([pickle.load(output_files) for output_files in output_files]
+            if use_memory_fs else results)
+
+
+def parallelize(nb_workers, use_memory_fs, progress_bar,
+                get_chunks, worker, reduce,
                 get_worker_meta_args=lambda _: dict(),
                 get_reduce_meta_args=lambda _: dict()):
     def closure(data, func, *args, **kwargs):
         chunks = get_chunks(nb_workers, data, *args, **kwargs)
         worker_meta_args = get_worker_meta_args(data)
         reduce_meta_args = get_reduce_meta_args(data)
+        manager = Manager()
+        queue = manager.Queue()
 
-        if use_memory_fs:
-            input_files = [NamedTemporaryFile(prefix=PREFIX_INPUT,
-                                              suffix=SUFFIX,
-                                              dir=MEMORY_FS_ROOT)
-                           for _ in range(nb_workers)]
+        workers_args, chunk_lengths, input_files, output_files = \
+            get_workers_args(use_memory_fs, nb_workers, progress_bar, chunks,
+                             worker_meta_args, queue,
+                             func, args, kwargs)
+        try:
+            pool = Pool(nb_workers, worker_init,
+                        (prepare_worker(use_memory_fs)(worker),))
 
-            output_files = [NamedTemporaryFile(prefix=PREFIX_OUTPUT,
-                                               suffix=SUFFIX,
-                                               dir=MEMORY_FS_ROOT)
-                            for _ in range(nb_workers)]
+            map_result = pool.map_async(global_worker, workers_args)
 
-            try:
-                for chunk, input_file in zip(chunks, input_files):
-                    with open(input_file.name, 'wb') as file:
-                        pickle.dump(chunk, file)
-
-                workers_args = [(input_file.name, output_file.name, index,
-                                 worker_meta_args,
-                                 dill.dumps(func), args, kwargs)
-                                for index, (input_file, output_file)
-                                in enumerate(zip(input_files, output_files))]
-
-                with Pool(nb_workers, worker_init,
-                          (prepare_worker_memory_fs(worker),)) as pool:
-                    pool.map(global_worker, workers_args)
-
-                results = [pickle.load(output_files)
-                           for output_files
-                           in output_files]
-
-                return reduce(results, reduce_meta_args)
-
-            finally:
-                # TODO: Find a better way to remove input file when not needed
-                #       any more
-                for file in input_files + output_files:
-                    try:
-                        file.close()
-                    except FileNotFoundError:
-                        # Probably an input file already deleted by a worker
-                        pass
-
-        else:
-            workers_args = [(chunk, index, worker_meta_args,
-                             dill.dumps(func), args, kwargs)
-                            for index, chunk in enumerate(chunks)]
-
-            with Pool(nb_workers, worker_init, (dedill_func(worker),)) as pool:
-                results = pool.map(global_worker, workers_args)
+            results = get_workers_result(use_memory_fs, nb_workers,
+                                         progress_bar, queue, chunk_lengths,
+                                         input_files, output_files, map_result)
 
             return reduce(results, reduce_meta_args)
 
+        finally:
+            if use_memory_fs:
+                for file in input_files + output_files:
+                    file.close()
     return closure
 
 
 class pandarallel:
     @classmethod
     def initialize(cls, shm_size_mb=None, nb_workers=NB_WORKERS,
-                   progress_bar=False, verbose=2,
-                   use_memory_fs_is_available=True):
+                   progress_bar=False, verbose=1, use_memory_fs=None):
         """
         Initialize Pandarallel shared memory.
 
@@ -154,67 +244,87 @@ class pandarallel:
             Number of workers used for parallelisation
 
         progress_bar: bool, optional
-            Not working on this version
+            Display a progress bar
+            WARNING: Progress bar is an experimental feature.
+                     This can lead to a considerable performance loss.
 
         verbose: int, optional
-            Not working on this version
+            If verbose >= 1, display all logs
+            If verbose < 1, display no log
 
-        use_memory_fs_is_available: bool, optional
-            If possible, use memory file system to tranfer data to work on
-            (dataframe, series...) between the main process and workers instead
-            of pipe.
+        use_memory_fs: bool, optional
+            If set to None, will use memory file system to tranfer data between
+            the main process and workers if available, else will use standard
+            multiprocessing data transfer (pipe).
 
-            Setting this option to True reduce data transfer time between,
-            especially for big data.
+            If set to True, will use memory file system to tranfer data between
+            the main process and workers and raise a SystemError if memory file
+            system is not available.
 
-            This option has an impact only if the directory `/dev/shm` exists
-            and if the user has read an write rights on it.
-            So basicaly this option only has an impact on some Linux
-            distributions (including Ubuntu). For all others operating systems,
-            standard multiprocessing data transfer (pipe) will be used
-            whatever its value.
+            If set to False, will use standard multiprocessing data transfer
+            (pipe) to tranfer data between the main process and workers.
+
+            Memory file system reduces data transfer time between the main
+            process and workers, especially for big data.
+
+            Memory file system is considered as available only if the
+            directory `/dev/shm` exists and if the user has read an write
+            rights on it.
+
+            Basicaly memory file system is only available on some Linux
+            distributions (including Ubuntu)
         """
-        print("Pandarallel will run on", nb_workers, "workers")
 
-        if use_memory_fs_is_available:
-            if is_memory_fs_available():
-                use_memory_fs = True
+        memory_fs_available = is_memory_fs_available()
+        use_memory_fs = (use_memory_fs
+                         or use_memory_fs is None and memory_fs_available)
+
+        if use_memory_fs and not memory_fs_available:
+            raise SystemError("Memory file system is not available")
+
+        if verbose >= 1:
+            print("Pandarallel will run on", nb_workers, "workers.")
+
+            if use_memory_fs:
+                print("Pandarallel will use Memory file system to transfer",
+                      "data between the main process and workers.", sep=" ")
             else:
-                print("Memory File System not available")
-                use_memory_fs = False
-        else:
-            use_memory_fs = False
+                print("Pandarallel will use standard multiprocessing data",
+                      "transfer (pipe) to transfer data between the main",
+                      "process and workers.", sep=" ")
 
         nbw = nb_workers
 
-        # DataFrame
-        args_df_p_a = (nbw, use_memory_fs, DF.Apply.get_chunks,
-                       DF.Apply.worker, DF.reduce)
-        args_df_p_am = (nbw, use_memory_fs, DF.ApplyMap.get_chunks,
-                        DF.ApplyMap.worker, DF.reduce)
+        bargs = (nbw, use_memory_fs, progress_bar)
 
-        pd.DataFrame.parallel_apply = parallelize(*args_df_p_a)
-        pd.DataFrame.parallel_applymap = parallelize(*args_df_p_am)
+        # For performance issuers, progress bar is not always available
+        bargs0 = (nbw, use_memory_fs, False)
+
+        # DataFrame
+        args = bargs + (DF.Apply.get_chunks, DF.Apply.worker, DF.reduce)
+        DataFrame.parallel_apply = parallelize(*args)
+
+        args = bargs0 + (DF.ApplyMap.get_chunks, DF.ApplyMap.worker, DF.reduce)
+        DataFrame.parallel_applymap = parallelize(*args)
 
         # Series
-        args_s_p_a = nbw, use_memory_fs, S.get_chunks, S.Apply.worker, S.reduce
-        args_s_p_m = nbw, use_memory_fs, S.get_chunks, S.Map.worker, S.reduce
-        pd.Series.parallel_apply = parallelize(*args_s_p_a)
-        pd.Series.parallel_map = parallelize(*args_s_p_m)
+        args = bargs0 + (S.get_chunks, S.Apply.worker, S.reduce)
+        Series.parallel_apply = parallelize(*args)
+
+        args = bargs0 + (S.get_chunks, S.Map.worker, S.reduce)
+        Series.parallel_map = parallelize(*args)
 
         # Series Rolling
-        args_sr_p_a = (nbw, use_memory_fs, SR.get_chunks, SR.worker, SR.reduce,
-                       SR.attribute2value)
-        pd.core.window.Rolling.parallel_apply = parallelize(*args_sr_p_a)
+        args = bargs0 + (SR.get_chunks, SR.worker, SR.reduce)
+        kwargs = dict(get_worker_meta_args=SR.att2value)
+        Rolling.parallel_apply = parallelize(*args, **kwargs)
 
         # DataFrame GroupBy
-        args_dfgb_p_a = (nbw, use_memory_fs, DFGB.get_chunks, DFGB.worker,
-                         DFGB.reduce)
-        pd.core.groupby.DataFrameGroupBy.parallel_apply = parallelize(
-            *args_dfgb_p_a, get_reduce_meta_args=DFGB.get_index)
+        args = bargs0 + (DFGB.get_chunks, DFGB.worker, DFGB.reduce)
+        kwargs = dict(get_reduce_meta_args=DFGB.get_index)
+        DataFrameGroupBy.parallel_apply = parallelize(*args, **kwargs)
 
         # Rolling GroupBy
-        args_rgb_p_a = (nbw, use_memory_fs, RGB.get_chunks, RGB.worker,
-                        RGB.reduce, RGB.attribute2value)
-        pd.core.window.RollingGroupby.parallel_apply = parallelize(
-            *args_rgb_p_a)
+        args = bargs + (RGB.get_chunks, RGB.worker, RGB.reduce)
+        kwargs = dict(get_worker_meta_args=SR.att2value)
+        RollingGroupby.parallel_apply = parallelize(*args, **kwargs)
