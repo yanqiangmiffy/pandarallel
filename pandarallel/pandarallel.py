@@ -1,3 +1,4 @@
+from ctypes import c_uint8
 import dill
 from inspect import getsourcelines
 from itertools import count
@@ -8,7 +9,9 @@ from pandas.core.window import Rolling
 from pandas.core.groupby import DataFrameGroupBy
 from pandas.core.window import RollingGroupby
 import pickle
+import re
 from tempfile import NamedTemporaryFile
+from types import FunctionType, CodeType
 
 from pandarallel.dataframe import DataFrame as DF
 from pandarallel.series import Series as S
@@ -40,6 +43,106 @@ def global_worker(x):
 
 def is_memory_fs_available():
     return os.path.exists(MEMORY_FS_ROOT)
+
+
+def copy_func(func, name=None):
+    new_func = FunctionType(func.__code__, func.__globals__,
+                            name or func.__name__, func.__defaults__,
+                            func.__closure__)
+
+    # In case f was given attrs (note this dict is a shallow copy):
+    new_func.__dict__.update(func.__dict__)
+
+    return new_func
+
+
+def replace(string, substitutions):
+    substrings = sorted(substitutions, key=len, reverse=True)
+    regex = re.compile(b'|'.join(map(re.escape, substrings)))
+    return regex.sub(lambda match: substitutions[match.group(0)], string)
+
+
+def tuple_remove_duplicate(tuple_):
+    return tuple(sorted(set(tuple_), key=tuple_.index))
+
+
+def replace_load_fast_by_load_const(bytecode, varname_index2const_index):
+    varname_index2const_index = {
+        b'|' + c_uint8(fast_index): b'd' + c_uint8(const_index)
+        for fast_index, const_index in varname_index2const_index.items()}
+
+    return replace(bytecode, varname_index2const_index)
+
+
+def replace_fast_by_fast(bytecode, varname_index2varname_new_index):
+    # STORE_FAST
+    store_varname_index2varname_new_index = {
+        b'}' + c_uint8(fast_index): b'}' + c_uint8(fast_new_index)
+        for fast_index, fast_new_index
+        in varname_index2varname_new_index.items()}
+
+    bytecode = replace(bytecode, store_varname_index2varname_new_index)
+
+    # LOAD_FAST
+    load_varname_index2varname_new_index = {
+        b'|' + c_uint8(fast_index): b'|' + c_uint8(fast_new_index)
+        for fast_index, fast_new_index
+        in varname_index2varname_new_index.items()}
+
+    bytecode = replace(bytecode, load_varname_index2varname_new_index)
+
+    return bytecode
+
+
+def inlined_partial(func, name, **arg_name2value):
+    # TODO: This function does not work if all the arguments of the source
+    #       function are not pinned. (Probably because arguments of the dest
+    #       function are not located at the beginning of co_varnames)
+    #       Anyway for Pandarallel use case we will live with it.
+
+    for arg_name in arg_name2value:
+        if arg_name not in func.__code__.co_varnames:
+            raise KeyError(arg_name + " is not an argument of " + str(func))
+
+    fcode = func.__code__
+    new_consts = tuple_remove_duplicate(
+        fcode.co_consts + tuple(arg_name2value.values()))
+    varname_index2new_const_index = {
+        fcode.co_varnames.index(arg_name): new_consts.index(value)
+        for arg_name, value in arg_name2value.items()}
+
+    new_varnames = tuple(set(fcode.co_varnames) - set(arg_name2value.keys()))
+    varname_index2varname_new_index = {
+        fcode.co_varnames.index(arg_name): new_varnames.index(arg_name)
+        for arg_name in new_varnames}
+
+    new_co_code = replace_load_fast_by_load_const(
+        fcode.co_code, varname_index2new_const_index)
+
+    new_co_code = replace_fast_by_fast(
+        new_co_code, varname_index2varname_new_index)
+
+    new_func = copy_func(func, name)
+
+    nfcode = new_func.__code__
+    new_func.__code__ = CodeType(nfcode.co_argcount - len(arg_name2value),
+                                 nfcode.co_kwonlyargcount,
+                                 len(new_varnames),
+                                 nfcode.co_stacksize,
+                                 nfcode.co_flags,
+                                 new_co_code,
+                                 new_consts,
+                                 nfcode.co_names,
+                                 new_varnames,
+                                 nfcode.co_filename,
+                                 name,
+                                 nfcode.co_firstlineno,
+                                 nfcode.co_lnotab,
+                                 nfcode.co_freevars,
+                                 nfcode.co_cellvars
+                                 )
+
+    return new_func
 
 
 def prepare_worker(use_memory_fs):
@@ -88,14 +191,6 @@ def create_temp_files(nb_files):
                                suffix=SUFFIX,
                                dir=MEMORY_FS_ROOT)
             for _ in range(nb_files)]
-
-
-def inliner_trick(func, line_to_insert):
-    func_lines, _ = getsourcelines(func)
-    func_lines[0] = "def progress_func(" + func_lines[0].split('(', 1)[1]
-    func_lines.insert(1, line_to_insert + "\n")
-
-    return "".join(func_lines)
 
 
 def wrap(context, progress_bar, index, queue, period):
