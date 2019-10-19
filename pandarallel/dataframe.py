@@ -11,9 +11,9 @@ class DataFrame:
         @staticmethod
         def get_chunks(nb_workers, df, *args, **kwargs):
             axis = kwargs.get("axis", 0)
-            if axis == 'index':
+            if axis == "index":
                 axis = 0
-            elif axis == 'columns':
+            elif axis == "columns":
                 axis = 1
 
             opposite_axis = 1 - axis

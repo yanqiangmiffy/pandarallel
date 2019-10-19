@@ -12,19 +12,19 @@ def func_for_dataframe_apply_axis_0(x):
 
 
 def func_for_dataframe_apply_axis_1(x):
-    return math.sin(x.a**2) + math.sin(x.b**2)
+    return math.sin(x.a ** 2) + math.sin(x.b ** 2)
 
 
 def func_for_dataframe_applymap(x):
-    return math.sin(x**2) - math.cos(x**2)
+    return math.sin(x ** 2) - math.cos(x ** 2)
 
 
 def func_for_series_map(x):
-    return math.log10(math.sqrt(math.exp(x**2)))
+    return math.log10(math.sqrt(math.exp(x ** 2)))
 
 
 def func_for_series_apply(x, power, bias=0):
-    return math.log10(math.sqrt(math.exp(x**power))) + bias
+    return math.log10(math.sqrt(math.exp(x ** power))) + bias
 
 
 def func_for_series_rolling_apply(x):
@@ -34,7 +34,7 @@ def func_for_series_rolling_apply(x):
 def func_for_dataframe_groupby_apply(df):
     dum = 0
     for item in df.b:
-        dum += math.log10(math.sqrt(math.exp(item**2)))
+        dum += math.log10(math.sqrt(math.exp(item ** 2)))
 
     return dum / len(df.b)
 
@@ -50,8 +50,9 @@ def pandarallel_init():
 
 def test_dataframe_apply_axis_0(pandarallel_init):
     df_size = int(1e1)
-    df = pd.DataFrame(dict(a=np.random.randint(1, 8, df_size),
-                           b=np.random.rand(df_size)))
+    df = pd.DataFrame(
+        dict(a=np.random.randint(1, 8, df_size), b=np.random.rand(df_size))
+    )
 
     res = df.apply(func_for_dataframe_apply_axis_0)
     res_parallel = df.parallel_apply(func_for_dataframe_apply_axis_0)
@@ -60,8 +61,9 @@ def test_dataframe_apply_axis_0(pandarallel_init):
 
 def test_dataframe_apply_axis_1(pandarallel_init):
     df_size = int(1e1)
-    df = pd.DataFrame(dict(a=np.random.randint(1, 8, df_size),
-                           b=np.random.rand(df_size)))
+    df = pd.DataFrame(
+        dict(a=np.random.randint(1, 8, df_size), b=np.random.rand(df_size))
+    )
 
     res = df.apply(func_for_dataframe_apply_axis_1, axis=1)
     res_parallel = df.parallel_apply(func_for_dataframe_apply_axis_1, axis=1)
@@ -70,8 +72,9 @@ def test_dataframe_apply_axis_1(pandarallel_init):
 
 def test_dataframe_applymap(pandarallel_init):
     df_size = int(1e1)
-    df = pd.DataFrame(dict(a=np.random.randint(1, 8, df_size),
-                           b=np.random.rand(df_size)))
+    df = pd.DataFrame(
+        dict(a=np.random.randint(1, 8, df_size), b=np.random.rand(df_size))
+    )
 
     res = df.applymap(func_for_dataframe_applymap)
     res_parallel = df.parallel_applymap(func_for_dataframe_applymap)
@@ -92,55 +95,61 @@ def test_series_apply(pandarallel_init):
     df = pd.DataFrame(dict(a=np.random.rand(df_size) + 1))
 
     res = df.a.apply(func_for_series_apply, args=(2,), bias=3)
-    res_parallel = df.a.parallel_apply(func_for_series_apply, args=(2,),
-                                       bias=3)
+    res_parallel = df.a.parallel_apply(func_for_series_apply, args=(2,), bias=3)
     assert res.equals(res_parallel)
 
 
 def test_series_rolling_apply(pandarallel_init):
     df_size = int(1e2)
-    df = pd.DataFrame(dict(a=np.random.randint(1, 8, df_size),
-                           b=list(range(df_size))))
+    df = pd.DataFrame(dict(a=np.random.randint(1, 8, df_size), b=list(range(df_size))))
 
     res = df.b.rolling(4).apply(func_for_series_rolling_apply, raw=False)
-    res_parallel = df.b.rolling(4).parallel_apply(func_for_series_rolling_apply,
-                                                  raw=False)
+    res_parallel = df.b.rolling(4).parallel_apply(
+        func_for_series_rolling_apply, raw=False
+    )
 
     assert res.equals(res_parallel)
 
 
 def test_dataframe_groupby_apply(pandarallel_init):
     df_size = int(1e1)
-    df = pd.DataFrame(dict(a=np.random.randint(1, 8, df_size),
-                           b=np.random.rand(df_size),
-                           c=np.random.rand(df_size)))
+    df = pd.DataFrame(
+        dict(
+            a=np.random.randint(1, 8, df_size),
+            b=np.random.rand(df_size),
+            c=np.random.rand(df_size),
+        )
+    )
 
     res = df.groupby("a").apply(func_for_dataframe_groupby_apply)
-    res_parallel = (df.groupby("a")
-                      .parallel_apply(func_for_dataframe_groupby_apply))
+    res_parallel = df.groupby("a").parallel_apply(func_for_dataframe_groupby_apply)
     res.equals(res_parallel)
 
     res = df.groupby(["a"]).apply(func_for_dataframe_groupby_apply)
-    res_parallel = (df.groupby(["a"])
-                      .parallel_apply(func_for_dataframe_groupby_apply))
+    res_parallel = df.groupby(["a"]).parallel_apply(func_for_dataframe_groupby_apply)
     res.equals(res_parallel)
 
     res = df.groupby(["a", "b"]).apply(func_for_dataframe_groupby_apply)
-    res_parallel = (df.groupby(["a", "b"])
-                      .parallel_apply(func_for_dataframe_groupby_apply))
+    res_parallel = df.groupby(["a", "b"]).parallel_apply(
+        func_for_dataframe_groupby_apply
+    )
     res.equals(res_parallel)
 
 
 def test_dataframe_groupby_rolling_apply(pandarallel_init):
     df_size = int(1e2)
-    df = pd.DataFrame(dict(a=np.random.randint(1, 3, df_size),
-                           b=np.random.rand(df_size)))
+    df = pd.DataFrame(
+        dict(a=np.random.randint(1, 3, df_size), b=np.random.rand(df_size))
+    )
 
-    res = (df.groupby('a').b.rolling(4)
-             .apply(func_for_dataframe_groupby_rolling_apply, raw=False))
-    res_parallel = (df.groupby('a')
-                    .b.rolling(4)
-                     .parallel_apply(func_for_dataframe_groupby_rolling_apply,
-                                     raw=False)
-                    )
+    res = (
+        df.groupby("a")
+        .b.rolling(4)
+        .apply(func_for_dataframe_groupby_rolling_apply, raw=False)
+    )
+    res_parallel = (
+        df.groupby("a")
+        .b.rolling(4)
+        .parallel_apply(func_for_dataframe_groupby_rolling_apply, raw=False)
+    )
     res.equals(res_parallel)

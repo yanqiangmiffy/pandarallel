@@ -17,16 +17,15 @@ class DataFrameGroupBy:
             return pd.Series(list(df_grouped.grouper), name=keys)
 
         # A list in "by" argument
-        return pd.MultiIndex.from_tuples(list(df_grouped.grouper),
-                                         names=df_grouped.keys)
+        return pd.MultiIndex.from_tuples(
+            list(df_grouped.grouper), names=df_grouped.keys
+        )
 
     @staticmethod
     def reduce(results, index):
-        return pd.DataFrame(list(itertools.chain.from_iterable([
-            result
-            for result in results
-        ])),
-            index=index
+        return pd.DataFrame(
+            list(itertools.chain.from_iterable([result for result in results])),
+            index=index,
         ).squeeze()
 
     @staticmethod

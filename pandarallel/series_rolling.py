@@ -16,11 +16,12 @@ class SeriesRolling:
 
     @staticmethod
     def att2value(rolling):
-        return {attribute: getattr(rolling, attribute)
-                for attribute in rolling._attributes}
+        return {
+            attribute: getattr(rolling, attribute) for attribute in rolling._attributes
+        }
 
     @staticmethod
     def worker(series, index, attribue2value, func, *args, **kwargs):
         result = series.rolling(**attribue2value).apply(func, *args, **kwargs)
 
-        return result if index == 0 else result[attribue2value['window']:]
+        return result if index == 0 else result[attribue2value["window"] :]

@@ -18,8 +18,9 @@ class RollingGroupBy:
 
     @staticmethod
     def att2value(rolling):
-        return {attribute: getattr(rolling, attribute)
-                for attribute in rolling._attributes}
+        return {
+            attribute: getattr(rolling, attribute) for attribute in rolling._attributes
+        }
 
     @staticmethod
     def worker(tuples, _, attribute2value, func, *args, **kwargs):
