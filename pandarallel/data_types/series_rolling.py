@@ -1,5 +1,5 @@
 import pandas as pd
-from pandarallel.utils import chunk
+from pandarallel.utils.tools import chunk
 
 
 class SeriesRolling:
