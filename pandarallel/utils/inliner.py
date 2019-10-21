@@ -1,6 +1,7 @@
 from inspect import signature
 import re
-from typing import Any, Callable, Dict, Tuple
+from types import FunctionType
+from typing import Any, Callable, Dict, Iterable, Tuple
 
 
 class OpCode:
@@ -106,58 +107,90 @@ def has_no_return(func: Callable) -> bool:
         and co_code[return_indexes[0] - 2 : return_indexes[0]] == load_const_none
     )
 
-def get_transition(old: Tuple[Any, ...], new: Tuple[Any, ...]) -> Dict[int, int]:
-    """Returns a dictionnary where keys
 
+def has_duplicates(iterable: Iterable):
+    """Return True if `iterable` contains duplicates items.
 
-def inline(pre_func: FunctionType, func: FunctionType) -> FunctionType:
-    """Insert `prefunc` at the beginning of `func` and returns a new function.
-
-    `prefunc` should not have a return statement (else a ValueError is raised).
-    `prefunc` should not have any argument (else a TypeError is raised)
-
-    This approach takes less CPU instructions than the standard decorator approach.
-
-    Example:
-
-    def prefunc():
-        a = "bonjour"
-        print(a)
-
-    def func(x, y):
-        z = x + 2 * y
-        return z ** 2
-
-    The function returned by inline is:
-
-    def inlined(x, y):
-        a = "bonjour"
-        print(a)
-        z = x + 2 * y
-        return z ** 2
+    Exemple: has_duplicates([1, 3, 2, 4]) == False
+             has_duplicates([1, 3, 2, 3]) == True
     """
 
-    if not has_no_return(pre_func):
-        raise ValueError("`pre_func` returns something")
+    return len(set(iterable)) != len(iterable)
 
-    if len(signature(pre_func).parameters) != 0:
-        raise TypeError("`pre_func` has paramenters")
 
-    pre_func_code = pre_func.__code__
-    pre_func_co_code = pre_func_code.co_code
-    pre_func_co_consts = pre_func_code.co_consts
-    pre_func_co_names = pre_func_code.co_names
-    pre_func_co_varnames = pre_func_code.co_varnames
+def get_transition(olds: Tuple[Any, ...], news: Tuple[Any, ...]) -> Dict[int, int]:
+    """Returns a dictionnary where a key represents a position of an item in olds and
+    a value represents the position of the same item in news.
 
-    func_code = func.__code__
-    func_co_code = func_code.co_code
-    func_co_consts = func_code.co_consts
-    func_co_names = func_code.co_names
-    func_co_varnames = func_code.co_varnames
+    Exemples:
+    olds = ("a", "c", "b", "d")
+    news = ("f", "g", "c", "d", "b", "a")
 
-    new_co_consts = remove_duplicates(func_co_consts + pre_func_co_consts)
-    new_co_names = remove_duplicates(func_co_names + pre_func_co_names)
-    new_co_varnames = remove_duplicates(func_co_varnames + pre_func_co_varnames)
+    get_transition(olds, news) = {0: 5, 1: 2, 2: 4, 3: 3}
+
+    `olds` and `news` should not have any duplicates, else a ValueError is raised.
+    All elements of `olds` should be in `news`, else a ValueError is raised.
+    """
+    if has_duplicates(old):
+        raise ValueError("`old` has duplicates")
+
+    if has_duplicates(new):
+        raise ValueError("`new` has duplicates")
+
+    if not set(old) <= set(new):
+        raise ValueError("All elements of `old` are not contained in `new`")
+
+    # return {old_index, new_index for old.}
+
+
+# def inline(pre_func: FunctionType, func: FunctionType) -> FunctionType:
+#     """Insert `prefunc` at the beginning of `func` and returns a new function.
+
+#     `prefunc` should not have a return statement (else a ValueError is raised).
+#     `prefunc` should not have any argument (else a TypeError is raised)
+
+#     This approach takes less CPU instructions than the standard decorator approach.
+
+#     Example:
+
+#     def prefunc():
+#         a = "bonjour"
+#         print(a)
+
+#     def func(x, y):
+#         z = x + 2 * y
+#         return z ** 2
+
+#     The function returned by inline is:
+
+#     def inlined(x, y):
+#         a = "bonjour"
+#         print(a)
+#         z = x + 2 * y
+#         return z ** 2
+#     """
+
+#     if not has_no_return(pre_func):
+#         raise ValueError("`pre_func` returns something")
+
+#     if len(signature(pre_func).parameters) != 0:
+#         raise TypeError("`pre_func` has paramenters")
+
+#     pre_func_code = pre_func.__code__
+#     pre_func_co_code = pre_func_code.co_code
+#     pre_func_co_consts = pre_func_code.co_consts
+#     pre_func_co_names = pre_func_code.co_names
+#     pre_func_co_varnames = pre_func_code.co_varnames
+
+#     func_code = func.__code__
+#     func_co_code = func_code.co_code
+#     func_co_consts = func_code.co_consts
+#     func_co_names = func_code.co_names
+#     func_co_varnames = func_code.co_varnames
+
+#     new_co_consts = remove_duplicates(func_co_consts + pre_func_co_consts)
+#     new_co_names = remove_duplicates(func_co_names + pre_func_co_names)
+#     new_co_varnames = remove_duplicates(func_co_varnames + pre_func_co_varnames)
 
 
 # def copy_func(func, name=None):

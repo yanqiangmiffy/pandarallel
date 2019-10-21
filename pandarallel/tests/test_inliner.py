@@ -84,15 +84,31 @@ def test_has_no_return():
     assert not inliner.has_no_return(func_several_returns)
 
 
-def test_inline():
-    def pre_func_which_returns():
-        return 42
+def test_has_duplicates():
+    assert not inliner.has_duplicates([1, 3, 2, 4])
+    assert inliner.has_duplicates([1, 3, 2, 3])
 
-    def pre_func_with_parameter(x):
-        print(x)
+
+def test_get_transitions():
+    with pytest.raises(ValueError):
+        inliner.get_transition((1, 2, 2), (1, 2, 3))
 
     with pytest.raises(ValueError):
-        inliner.inline(pre_func_which_returns, lambda x: x)
+        inliner.get_transition((1, 2), (1, 2, 2))
 
-    with pytest.raises(TypeError):
-        inliner.inline(pre_func_with_parameter, lambda x: x)
+    with pytest.raises(ValueError):
+        inliner.get_transition((1, 2, 3), (1, 2, 4, 5))
+
+
+# def test_inline():
+#     def pre_func_which_returns():
+#         return 42
+
+#     def pre_func_with_parameter(x):
+#         print(x)
+
+#     with pytest.raises(ValueError):
+#         inliner.inline(pre_func_which_returns, lambda x: x)
+
+#     with pytest.raises(TypeError):
+#         inliner.inline(pre_func_with_parameter, lambda x: x)
