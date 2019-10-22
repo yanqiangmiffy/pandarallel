@@ -91,13 +91,18 @@ def test_has_duplicates():
 
 def test_get_transitions():
     with pytest.raises(ValueError):
-        inliner.get_transition((1, 2, 2), (1, 2, 3))
+        inliner.get_transitions((1, 2, 2), (1, 2, 3))
 
     with pytest.raises(ValueError):
-        inliner.get_transition((1, 2), (1, 2, 2))
+        inliner.get_transitions((1, 2), (1, 2, 2))
 
     with pytest.raises(ValueError):
-        inliner.get_transition((1, 2, 3), (1, 2, 4, 5))
+        inliner.get_transitions((1, 2, 3), (1, 2, 4, 5))
+
+    olds = ("a", "c", "b", "d")
+    news = ("f", "g", "c", "d", "b", "a")
+
+    assert inliner.get_transitions(olds, news) == {0: 5, 1: 2, 2: 4, 3: 3}
 
 
 # def test_inline():

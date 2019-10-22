@@ -1,11 +1,13 @@
 from inspect import signature
 import re
 from types import FunctionType
-from typing import Any, Callable, Dict, Iterable, Tuple
+from typing import Any, Callable, Dict, Tuple
 
 
 class OpCode:
     LOAD_CONST = b"d"
+    LOAD_FAST = b"|"
+    LOAD_GLOBAL = b"t"
     RETURN_VALUE = b"S"
 
 
@@ -108,17 +110,17 @@ def has_no_return(func: Callable) -> bool:
     )
 
 
-def has_duplicates(iterable: Iterable):
-    """Return True if `iterable` contains duplicates items.
+def has_duplicates(tuple_: Tuple):
+    """Return True if `tuple_` contains duplicates items.
 
-    Exemple: has_duplicates([1, 3, 2, 4]) == False
-             has_duplicates([1, 3, 2, 3]) == True
+    Exemple: has_duplicates((1, 3, 2, 4)) == False
+             has_duplicates((1, 3, 2, 3)) == True
     """
 
-    return len(set(iterable)) != len(iterable)
+    return len(set(tuple_)) != len(tuple_)
 
 
-def get_transition(olds: Tuple[Any, ...], news: Tuple[Any, ...]) -> Dict[int, int]:
+def get_transitions(olds: Tuple[Any, ...], news: Tuple[Any, ...]) -> Dict[int, int]:
     """Returns a dictionnary where a key represents a position of an item in olds and
     a value represents the position of the same item in news.
 
@@ -126,71 +128,100 @@ def get_transition(olds: Tuple[Any, ...], news: Tuple[Any, ...]) -> Dict[int, in
     olds = ("a", "c", "b", "d")
     news = ("f", "g", "c", "d", "b", "a")
 
-    get_transition(olds, news) = {0: 5, 1: 2, 2: 4, 3: 3}
+    get_transitions(olds, news) = {0: 5, 1: 2, 2: 4, 3: 3}
 
     `olds` and `news` should not have any duplicates, else a ValueError is raised.
     All elements of `olds` should be in `news`, else a ValueError is raised.
     """
-    if has_duplicates(old):
-        raise ValueError("`old` has duplicates")
+    if has_duplicates(olds):
+        raise ValueError("`olds` has duplicates")
 
-    if has_duplicates(new):
-        raise ValueError("`new` has duplicates")
+    if has_duplicates(news):
+        raise ValueError("`news` has duplicates")
 
-    if not set(old) <= set(new):
-        raise ValueError("All elements of `old` are not contained in `new`")
+    if not set(olds) <= set(news):
+        raise ValueError("At least on item of `olds` is not in `news`")
 
-    # return {old_index, new_index for old.}
+    return {index: news.index(old) for index, old in enumerate(olds)}
 
 
-# def inline(pre_func: FunctionType, func: FunctionType) -> FunctionType:
-#     """Insert `prefunc` at the beginning of `func` and returns a new function.
+def inline(
+    pre_func: FunctionType, func: FunctionType
+) -> Tuple[bytes, Tuple[Any, ...], Tuple[Any, ...], Tuple[Any, ...]]:
+    """Insert `prefunc` at the beginning of `func` and returns a co_code, co_consts,
+       co_names & co_varnames of the new function.
 
-#     `prefunc` should not have a return statement (else a ValueError is raised).
-#     `prefunc` should not have any argument (else a TypeError is raised)
+    `prefunc` should not have a return statement (else a ValueError is raised).
+    `prefunc` should not have any argument (else a TypeError is raised)
 
-#     This approach takes less CPU instructions than the standard decorator approach.
+    This approach takes less CPU instructions than the standard decorator approach.
 
-#     Example:
+    Example:
 
-#     def prefunc():
-#         a = "bonjour"
-#         print(a)
+    def prefunc():
+        a = "bonjour"
+        print(a)
 
-#     def func(x, y):
-#         z = x + 2 * y
-#         return z ** 2
+    def func(x, y):
+        z = x + 2 * y
+        return z ** 2
 
-#     The function returned by inline is:
+    The items returned correspond to the following function:
 
-#     def inlined(x, y):
-#         a = "bonjour"
-#         print(a)
-#         z = x + 2 * y
-#         return z ** 2
-#     """
+    def inlined(x, y):
+        a = "bonjour"
+        print(a)
+        z = x + 2 * y
+        return z ** 2
+    """
 
-#     if not has_no_return(pre_func):
-#         raise ValueError("`pre_func` returns something")
+    if not has_no_return(pre_func):
+        raise ValueError("`pre_func` returns something")
 
-#     if len(signature(pre_func).parameters) != 0:
-#         raise TypeError("`pre_func` has paramenters")
+    if len(signature(pre_func).parameters) != 0:
+        raise TypeError("`pre_func` has paramenters")
 
-#     pre_func_code = pre_func.__code__
-#     pre_func_co_code = pre_func_code.co_code
-#     pre_func_co_consts = pre_func_code.co_consts
-#     pre_func_co_names = pre_func_code.co_names
-#     pre_func_co_varnames = pre_func_code.co_varnames
+    pre_func_code = pre_func.__code__
+    pre_func_co_code = pre_func_code.co_code
+    pre_func_co_consts = pre_func_code.co_consts
+    pre_func_co_names = pre_func_code.co_names
+    pre_func_co_varnames = pre_func_code.co_varnames
 
-#     func_code = func.__code__
-#     func_co_code = func_code.co_code
-#     func_co_consts = func_code.co_consts
-#     func_co_names = func_code.co_names
-#     func_co_varnames = func_code.co_varnames
+    func_code = func.__code__
+    func_co_code = func_code.co_code
+    func_co_consts = func_code.co_consts
+    func_co_names = func_code.co_names
+    func_co_varnames = func_code.co_varnames
 
-#     new_co_consts = remove_duplicates(func_co_consts + pre_func_co_consts)
-#     new_co_names = remove_duplicates(func_co_names + pre_func_co_names)
-#     new_co_varnames = remove_duplicates(func_co_varnames + pre_func_co_varnames)
+    new_co_consts = remove_duplicates(func_co_consts + pre_func_co_consts)
+    new_co_names = remove_duplicates(func_co_names + pre_func_co_names)
+    new_co_varnames = remove_duplicates(func_co_varnames + pre_func_co_varnames)
+
+    transitions_co_consts = get_transitions(pre_func_co_consts, new_co_consts)
+    transitions_co_names = get_transitions(pre_func_co_names, new_co_names)
+    transitions_co_varnames = get_transitions(pre_func_co_varnames, new_co_varnames)
+
+    load_const_transitions = {
+        OpCode.LOAD_CONST + get_bytecode(key): OpCode.LOAD_CONST + get_bytecode(value)
+        for key, value in transitions_co_consts.items()
+    }
+
+    load_global_transitions = {
+        OpCode.LOAD_GLOBAL + get_bytecode(key): OpCode.LOAD_GLOBAL + get_bytecode(value)
+        for key, value in transitions_co_names.items()
+    }
+
+    load_fast_transitions = {
+        OpCode.LOAD_FAST + get_bytecode(key): OpCode.LOAD_FAST + get_bytecode(value)
+        for key, value in transitions_co_varnames.items()
+    }
+
+    new_co_code = pre_func_co_code[:4] + func_co_code
+    new_co_code = multiple_replace(new_co_code, load_const_transitions)
+    new_co_code = multiple_replace(new_co_code, load_global_transitions)
+    new_co_code = multiple_replace(new_co_code, load_fast_transitions)
+
+    return new_co_code, new_co_consts, new_co_names, new_co_varnames
 
 
 # def copy_func(func, name=None):
