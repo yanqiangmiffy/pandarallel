@@ -8,6 +8,7 @@ class OpCode:
     LOAD_CONST = b"d"
     LOAD_FAST = b"|"
     LOAD_GLOBAL = b"t"
+    STORE_FAST = b"}"
     RETURN_VALUE = b"S"
 
 
@@ -197,6 +198,10 @@ def inline(
     new_co_names = remove_duplicates(func_co_names + pre_func_co_names)
     new_co_varnames = remove_duplicates(func_co_varnames + pre_func_co_varnames)
 
+    import ipdb
+
+    ipdb.set_trace()
+
     transitions_co_consts = get_transitions(pre_func_co_consts, new_co_consts)
     transitions_co_names = get_transitions(pre_func_co_names, new_co_names)
     transitions_co_varnames = get_transitions(pre_func_co_varnames, new_co_varnames)
@@ -216,10 +221,17 @@ def inline(
         for key, value in transitions_co_varnames.items()
     }
 
-    new_co_code = pre_func_co_code[:4] + func_co_code
+    store_fast_transitions = {
+        OpCode.STORE_FAST + get_bytecode(key): OpCode.STORE_FAST + get_bytecode(value)
+        for key, value in transitions_co_varnames.items()
+    }
+
+    new_co_code = func_co_code
+    new_co_code = pre_func_co_code[:-4] + func_co_code
     new_co_code = multiple_replace(new_co_code, load_const_transitions)
     new_co_code = multiple_replace(new_co_code, load_global_transitions)
     new_co_code = multiple_replace(new_co_code, load_fast_transitions)
+    new_co_code = multiple_replace(new_co_code, store_fast_transitions)
 
     return new_co_code, new_co_consts, new_co_names, new_co_varnames
 
