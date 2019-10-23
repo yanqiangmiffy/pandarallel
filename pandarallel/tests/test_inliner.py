@@ -105,15 +105,32 @@ def test_get_transitions():
     assert inliner.get_transitions(olds, news) == {0: 5, 1: 2, 2: 4, 3: 3}
 
 
-# def test_inline():
-#     def pre_func_which_returns():
-#         return 42
+def test_inline():
+    def pre_func_which_returns():
+        return 42
 
-#     def pre_func_with_parameter(x):
-#         print(x)
+    def pre_func_with_parameter(x):
+        print(x)
 
-#     with pytest.raises(ValueError):
-#         inliner.inline(pre_func_which_returns, lambda x: x)
+    with pytest.raises(ValueError):
+        inliner.inline(pre_func_which_returns, lambda x: x)
 
-#     with pytest.raises(TypeError):
-#         inliner.inline(pre_func_with_parameter, lambda x: x)
+    with pytest.raises(TypeError):
+        inliner.inline(pre_func_with_parameter, lambda x: x)
+
+    def prefunc():
+        a = "bonjour"
+        print(a)
+
+    def func(x, y):
+        z = x + 2 * y
+        return z ** 2
+
+    new_co_code = b"d\x02}\x03t\x00|\x03\x83\x01\x01\x00" + func.__code__.co_code
+    new_co_consts = (None, 2, "bonjour")
+    new_co_names = ("print",)
+    new_co_varnames = ("x", "y", "z", "a")
+
+    new_results = new_co_code, new_co_consts, new_co_names, new_co_varnames
+
+    assert inliner.inline(prefunc, func) == new_results

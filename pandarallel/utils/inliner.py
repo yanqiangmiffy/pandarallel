@@ -198,10 +198,6 @@ def inline(
     new_co_names = remove_duplicates(func_co_names + pre_func_co_names)
     new_co_varnames = remove_duplicates(func_co_varnames + pre_func_co_varnames)
 
-    import ipdb
-
-    ipdb.set_trace()
-
     transitions_co_consts = get_transitions(pre_func_co_consts, new_co_consts)
     transitions_co_names = get_transitions(pre_func_co_names, new_co_names)
     transitions_co_varnames = get_transitions(pre_func_co_varnames, new_co_varnames)
@@ -226,12 +222,12 @@ def inline(
         for key, value in transitions_co_varnames.items()
     }
 
-    new_co_code = func_co_code
+    pre_func_co_code = multiple_replace(pre_func_co_code, load_const_transitions)
+    pre_func_co_code = multiple_replace(pre_func_co_code, load_global_transitions)
+    pre_func_co_code = multiple_replace(pre_func_co_code, load_fast_transitions)
+    pre_func_co_code = multiple_replace(pre_func_co_code, store_fast_transitions)
+
     new_co_code = pre_func_co_code[:-4] + func_co_code
-    new_co_code = multiple_replace(new_co_code, load_const_transitions)
-    new_co_code = multiple_replace(new_co_code, load_global_transitions)
-    new_co_code = multiple_replace(new_co_code, load_fast_transitions)
-    new_co_code = multiple_replace(new_co_code, store_fast_transitions)
 
     return new_co_code, new_co_consts, new_co_names, new_co_varnames
 
@@ -240,13 +236,10 @@ def inline(
 #     new_func = FunctionType(
 #         func.__code__,
 #         func.__globals__,
-#         name or func.__name__,
+#         func.__name__,
 #         func.__defaults__,
 #         func.__closure__,
 #     )
-
-#     # In case f was given attrs (note this dict is a shallow copy):
-#     new_func.__dict__.update(func.__dict__)
 
 #     return new_func
 
