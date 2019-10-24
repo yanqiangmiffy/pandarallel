@@ -106,25 +106,24 @@ def test_get_transitions():
 
 
 def test_get_new_func_attributes():
-    def pre_func_which_returns():
-        return 42
+    def pre_func_which_returns(a, b):
+        c = "Hello"
+        print(c + " " + a + " " + b)
+        return c + " " + a + " " + b
 
-    def pre_func_with_parameter(x):
-        print(x)
-
-    with pytest.raises(ValueError):
-        inliner.get_new_func_attributes(pre_func_which_returns, lambda x: x)
-
-    with pytest.raises(TypeError):
-        inliner.get_new_func_attributes(pre_func_with_parameter, lambda x: x)
-
-    def pre_func():
-        a = "bonjour"
-        print(a)
+    def pre_func(a, b):
+        c = "Hello"
+        print(c + " " + a + " " + b)
 
     def func(x, y):
         z = x + 2 * y
         return z ** 2
+
+    with pytest.raises(ValueError):
+        inliner.get_new_func_attributes(pre_func_which_returns, lambda x: x, ())
+
+    with pytest.raises(TypeError):
+        inliner.get_new_func_attributes(pre_func_with_parameter, lambda x: x)
 
     new_co_code = b"d\x02}\x03t\x00|\x03\x83\x01\x01\x00" + func.__code__.co_code
     new_co_consts = (None, 2, "bonjour")
@@ -137,15 +136,15 @@ def test_get_new_func_attributes():
 
 
 def test_inline():
-    def pre_func():
-        a = "bonjour"
-        print(a)
+    def pre_func(a, b):
+        c = "Hello"
+        print(c + " " + a + " " + b)
 
     def func(x, y):
         z = x + 2 * y
         return z ** 2
 
-    inlined_func = inliner.inline(pre_func, func)
+    inlined_func = inliner.inline(pre_func, func, ("One", "T"))
 
     assert func(3, 4) == inlined_func(3, 4)
 

@@ -147,29 +147,31 @@ def get_transitions(olds: Tuple[Any, ...], news: Tuple[Any, ...]) -> Dict[int, i
 
 
 def get_new_func_attributes(
-    pre_func: FunctionType, func: FunctionType
+    pre_func: FunctionType, func: FunctionType, pre_func_arguments: Tuple[Any, ...]
 ) -> Tuple[bytes, Tuple[Any, ...], Tuple[Any, ...], Tuple[Any, ...]]:
     """Insert `prefunc` at the beginning of `func` and returns a co_code, co_consts,
        co_names & co_varnames of the new function.
 
     `pre_func` should not have a return statement (else a ValueError is raised).
-    `pre_func` should not have any argument (else a TypeError is raised)
+    `pre_func_arguments` should contain exactly the same number of items than the
+    arguments taken by `pre_func` (else a TypeError is raised)
 
     Example:
 
-    def pre_func():
-        a = "bonjour"
-        print(a)
+    def pre_func(a, b):
+        c = "Hello"
+        print(c + " " + a + " " + b)
 
     def func(x, y):
         z = x + 2 * y
         return z ** 2
 
-    The items returned correspond to the following function:
+    The items returned by get_new_func_attributes(pre_func, func, ("how are", "you?"))
+    correspond to the following function
 
     def inlined(x, y):
-        a = "bonjour"
-        print(a)
+        c = "Hello"
+        print(c + " " + "how are" + " " + "you?")
         z = x + 2 * y
         return z ** 2
     """
@@ -177,8 +179,9 @@ def get_new_func_attributes(
     if not has_no_return(pre_func):
         raise ValueError("`pre_func` returns something")
 
-    if len(signature(pre_func).parameters) != 0:
-        raise TypeError("`pre_func` has paramenters")
+    if len(signature(pre_func).parameters) == len(pre_func_arguments):
+        msg = "`pre_func_arguments` and arguments in `pre_func` do not correspond"
+        raise TypeError(msg)
 
     pre_func_code = pre_func.__code__
     pre_func_co_code = pre_func_code.co_code
