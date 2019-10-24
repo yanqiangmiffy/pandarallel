@@ -105,7 +105,7 @@ def test_get_transitions():
     assert inliner.get_transitions(olds, news) == {0: 5, 1: 2, 2: 4, 3: 3}
 
 
-def test_inline():
+def test_get_new_func_attributes():
     def pre_func_which_returns():
         return 42
 
@@ -113,12 +113,12 @@ def test_inline():
         print(x)
 
     with pytest.raises(ValueError):
-        inliner.inline(pre_func_which_returns, lambda x: x)
+        inliner.get_new_func_attributes(pre_func_which_returns, lambda x: x)
 
     with pytest.raises(TypeError):
-        inliner.inline(pre_func_with_parameter, lambda x: x)
+        inliner.get_new_func_attributes(pre_func_with_parameter, lambda x: x)
 
-    def prefunc():
+    def pre_func():
         a = "bonjour"
         print(a)
 
@@ -133,4 +133,19 @@ def test_inline():
 
     new_results = new_co_code, new_co_consts, new_co_names, new_co_varnames
 
-    assert inliner.inline(prefunc, func) == new_results
+    assert inliner.get_new_func_attributes(pre_func, func) == new_results
+
+
+def test_inline():
+    def pre_func():
+        a = "bonjour"
+        print(a)
+
+    def func(x, y):
+        z = x + 2 * y
+        return z ** 2
+
+    inlined_func = inliner.inline(pre_func, func)
+
+    assert func(3, 4) == inlined_func(3, 4)
+

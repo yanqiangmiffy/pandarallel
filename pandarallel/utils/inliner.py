@@ -1,6 +1,6 @@
 from inspect import signature
 import re
-from types import FunctionType
+from types import CodeType, FunctionType
 from typing import Any, Callable, Dict, Tuple
 
 
@@ -146,20 +146,18 @@ def get_transitions(olds: Tuple[Any, ...], news: Tuple[Any, ...]) -> Dict[int, i
     return {index: news.index(old) for index, old in enumerate(olds)}
 
 
-def inline(
+def get_new_func_attributes(
     pre_func: FunctionType, func: FunctionType
 ) -> Tuple[bytes, Tuple[Any, ...], Tuple[Any, ...], Tuple[Any, ...]]:
     """Insert `prefunc` at the beginning of `func` and returns a co_code, co_consts,
        co_names & co_varnames of the new function.
 
-    `prefunc` should not have a return statement (else a ValueError is raised).
-    `prefunc` should not have any argument (else a TypeError is raised)
-
-    This approach takes less CPU instructions than the standard decorator approach.
+    `pre_func` should not have a return statement (else a ValueError is raised).
+    `pre_func` should not have any argument (else a TypeError is raised)
 
     Example:
 
-    def prefunc():
+    def pre_func():
         a = "bonjour"
         print(a)
 
@@ -232,97 +230,63 @@ def inline(
     return new_co_code, new_co_consts, new_co_names, new_co_varnames
 
 
-# def copy_func(func, name=None):
-#     new_func = FunctionType(
-#         func.__code__,
-#         func.__globals__,
-#         func.__name__,
-#         func.__defaults__,
-#         func.__closure__,
-#     )
+def inline(pre_func: FunctionType, func: FunctionType):
+    """Insert `prefunc` at the beginning of `func` and return the corresponding
+    function.
 
-#     return new_func
+    `pre_func` should not have a return statement (else a ValueError is raised).
+    `pre_func` should not have any argument (else a TypeError is raised)
 
+    This approach takes less CPU instructions than the standard decorator approach.
 
-# def replace_load_fast_by_load_const(bytecode, varname_index2const_index):
-#     varname_index2const_index = {
-#         b"|" + c_uint8(fast_index): b"d" + c_uint8(const_index)
-#         for fast_index, const_index in varname_index2const_index.items()
-#     }
+    Example:
 
-#     return replace(bytecode, varname_index2const_index)
+    def pre_func():
+        a = "bonjour"
+        print(a)
 
+    def func(x, y):
+        z = x + 2 * y
+        return z ** 2
 
-# def replace_fast_by_fast(bytecode, varname_index2varname_new_index):
-#     # STORE_FAST
-#     store_varname_index2varname_new_index = {
-#         b"}" + c_uint8(fast_index): b"}" + c_uint8(fast_new_index)
-#         for fast_index, fast_new_index in varname_index2varname_new_index.items()
-#     }
+    The returned function corresponds to:
 
-#     bytecode = replace(bytecode, store_varname_index2varname_new_index)
+    def inlined(x, y):
+        a = "bonjour"
+        print(a)
+        z = x + 2 * y
+        return z ** 2
+    """
 
-#     # LOAD_FAST
-#     load_varname_index2varname_new_index = {
-#         b"|" + c_uint8(fast_index): b"|" + c_uint8(fast_new_index)
-#         for fast_index, fast_new_index in varname_index2varname_new_index.items()
-#     }
+    new_func = FunctionType(
+        func.__code__,
+        func.__globals__,
+        func.__name__,
+        func.__defaults__,
+        func.__closure__,
+    )
 
-#     bytecode = replace(bytecode, load_varname_index2varname_new_index)
+    new_attributes = get_new_func_attributes(pre_func, func)
+    new_co_code, new_co_consts, new_co_names, new_co_varnames = new_attributes
 
-#     return bytecode
+    nfcode = new_func.__code__
 
+    new_func.__code__ = CodeType(
+        nfcode.co_argcount,
+        nfcode.co_kwonlyargcount,
+        len(new_co_varnames),
+        nfcode.co_stacksize,
+        nfcode.co_flags,
+        new_co_code,
+        new_co_consts,
+        new_co_names,
+        new_co_varnames,
+        nfcode.co_filename,
+        nfcode.co_name,
+        nfcode.co_firstlineno,
+        nfcode.co_lnotab,
+        nfcode.co_freevars,
+        nfcode.co_cellvars,
+    )
 
-# def inlined_partial(func, name, **arg_name2value):
-#     # TODO: This function does not work if all the arguments of the source
-#     #       function are not pinned. (Probably because arguments of the dest
-#     #       function are not located at the beginning of co_varnames)
-#     #       Anyway for Pandarallel use case we will live with it.
-
-#     for arg_name in arg_name2value:
-#         if arg_name not in func.__code__.co_varnames:
-#             raise KeyError(arg_name + " is not an argument of " + str(func))
-
-#     fcode = func.__code__
-#     new_consts = tuple_remove_duplicate(
-#         fcode.co_consts + tuple(arg_name2value.values())
-#     )
-#     varname_index2new_const_index = {
-#         fcode.co_varnames.index(arg_name): new_consts.index(value)
-#         for arg_name, value in arg_name2value.items()
-#     }
-
-#     new_varnames = tuple(set(fcode.co_varnames) - set(arg_name2value.keys()))
-#     varname_index2varname_new_index = {
-#         fcode.co_varnames.index(arg_name): new_varnames.index(arg_name)
-#         for arg_name in new_varnames
-#     }
-
-#     new_co_code = replace_load_fast_by_load_const(
-#         fcode.co_code, varname_index2new_const_index
-#     )
-
-#     new_co_code = replace_fast_by_fast(new_co_code, varname_index2varname_new_index)
-
-#     new_func = copy_func(func, name)
-
-#     nfcode = new_func.__code__
-#     new_func.__code__ = CodeType(
-#         nfcode.co_argcount - len(arg_name2value),
-#         nfcode.co_kwonlyargcount,
-#         len(new_varnames),
-#         nfcode.co_stacksize,
-#         nfcode.co_flags,
-#         new_co_code,
-#         new_consts,
-#         nfcode.co_names,
-#         new_varnames,
-#         nfcode.co_filename,
-#         name,
-#         nfcode.co_firstlineno,
-#         nfcode.co_lnotab,
-#         nfcode.co_freevars,
-#         nfcode.co_cellvars,
-#     )
-
-#     return new_func
+    return new_func
