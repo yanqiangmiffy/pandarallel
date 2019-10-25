@@ -89,6 +89,40 @@ def test_has_duplicates():
     assert inliner.has_duplicates([1, 3, 2, 3])
 
 
+def test_key2value():
+    sources = ("a", "b", "d", "hello")
+    sources_duplicate = ("a", "b", "d", "hello", "b")
+
+    dests = (54, "e", 2)
+    dests_duplicate = (54, "e", 2, "e")
+
+    source2dest = {"b": 55, "hello": "world"}
+    source2dest_with_extra_key = {"b": 55, "hello": "world", "toto": 4}
+
+    expected_result = (("a", "d"), (54, "e", 2, 55, "world"), {1: 3, 3: 4})
+
+    with pytest.raises(ValueError):
+        inliner.key2value(sources_duplicate, dests, source2dest)
+
+    with pytest.raises(ValueError):
+        inliner.key2value(sources, dests_duplicate, source2dest)
+
+    with pytest.raises(ValueError):
+        inliner.key2value(sources, dests, source2dest_with_extra_key)
+
+    assert inliner.key2value(sources, dests, source2dest) == expected_result
+
+
+def test_pin_arguments():
+    def func(a, b):
+        print(a)
+
+        return a + b
+
+    with pytest.raises(ValueError):
+        inliner.pin_arguments(func, (1, 2, 3))
+
+
 def test_get_transitions():
     with pytest.raises(ValueError):
         inliner.get_transitions((1, 2, 2), (1, 2, 3))
@@ -120,19 +154,16 @@ def test_get_new_func_attributes():
         return z ** 2
 
     with pytest.raises(ValueError):
-        inliner.get_new_func_attributes(pre_func_which_returns, lambda x: x, ())
+        inliner.get_new_func_attributes(pre_func_which_returns, lambda x: x, ("a", "b"))
 
-    with pytest.raises(TypeError):
-        inliner.get_new_func_attributes(pre_func_with_parameter, lambda x: x)
+    # new_co_code = b"d\x02}\x03t\x00|\x03\x83\x01\x01\x00" + func.__code__.co_code
+    # new_co_consts = (None, 2, "bonjour")
+    # new_co_names = ("print",)
+    # new_co_varnames = ("x", "y", "z", "a")
 
-    new_co_code = b"d\x02}\x03t\x00|\x03\x83\x01\x01\x00" + func.__code__.co_code
-    new_co_consts = (None, 2, "bonjour")
-    new_co_names = ("print",)
-    new_co_varnames = ("x", "y", "z", "a")
+    # new_results = new_co_code, new_co_consts, new_co_names, new_co_varnames
 
-    new_results = new_co_code, new_co_consts, new_co_names, new_co_varnames
-
-    assert inliner.get_new_func_attributes(pre_func, func) == new_results
+    # assert inliner.get_new_func_attributes(pre_func, func) == new_results
 
 
 def test_inline():
@@ -144,7 +175,6 @@ def test_inline():
         z = x + 2 * y
         return z ** 2
 
-    inlined_func = inliner.inline(pre_func, func, ("One", "T"))
+    inlined_func = inliner.inline(pre_func, func, ("One", "Two", "Three"))
 
     assert func(3, 4) == inlined_func(3, 4)
-

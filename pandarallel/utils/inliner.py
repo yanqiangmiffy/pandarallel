@@ -121,6 +121,67 @@ def has_duplicates(tuple_: Tuple):
     return len(set(tuple_)) != len(tuple_)
 
 
+def key2value(sources: Tuple, dests: Tuple, source2dest: Dict) -> Tuple:
+    """Delete all items in `sources` tuple which are in `source2dest` keys and add
+    corresponding values in `dests` keys.
+
+    Example:
+    sources = ("a", "b", "d", "hello")
+    dests = (54, "e", 2)
+    source2dest = {"b": 55, "hello": "world"}
+
+    key2value(sources, dests, source2dest) = (("a", "d"),
+                                              (54, "e", 2, 55, "world),
+                                              {"1": "3", "3": "4"})
+
+    `sources` and `dests` should not have duplicate items, else a ValueError is raided.
+    All keys of `source2dest` should be in `sources`, else a ValueError is raised.
+    """
+    if has_duplicates(sources):
+        raise ValueError("`sources` has duplicates")
+
+    if has_duplicates(dests):
+        raise ValueError("`dests` has duplicates")
+
+    if len(set(source2dest) - set(sources)) != 0:
+        raise ValueError("Some keys in `source2dest` are not in `sources`")
+
+    new_sources = tuple(item for item in sources if item not in source2dest)
+    new_dests = remove_duplicates(dests + tuple(source2dest.values()))
+    transitions = {
+        sources.index(key): new_dests.index(value) for key, value in source2dest.items()
+    }
+
+    return new_sources, new_dests, transitions
+
+
+def pin_arguments(func, arguments):
+    """Transform `func` in a function with no arguments.
+
+    Example:
+    def func(a, b):
+        print(a)
+
+        return a + b
+
+    The function returned by pin_arguments(func, (42, 34)) is equivalent to:
+
+    def pinned_func():
+        print(42)
+
+        return 42 + 34
+
+    This function is in some ways equivalent to functools.partials but with a faster
+    runtime.
+
+    `arguments` list should contain the same number of elements than `func` has
+    arguments, else a ValueError is raised.
+    """
+
+    if len(signature(func).parameters) != len(arguments):
+        raise ValueError("`arguments` do not fit with `func` arguments.")
+
+
 def get_transitions(olds: Tuple[Any, ...], news: Tuple[Any, ...]) -> Dict[int, int]:
     """Returns a dictionnary where a key represents a position of an item in olds and
     a value represents the position of the same item in news.
@@ -178,10 +239,6 @@ def get_new_func_attributes(
 
     if not has_no_return(pre_func):
         raise ValueError("`pre_func` returns something")
-
-    if len(signature(pre_func).parameters) == len(pre_func_arguments):
-        msg = "`pre_func_arguments` and arguments in `pre_func` do not correspond"
-        raise TypeError(msg)
 
     pre_func_code = pre_func.__code__
     pre_func_co_code = pre_func_code.co_code
