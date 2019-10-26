@@ -113,16 +113,6 @@ def test_key2value():
     assert inliner.key2value(sources, dests, source2dest) == expected_result
 
 
-def test_pin_arguments():
-    def func(a, b):
-        print(a)
-
-        return a + b
-
-    with pytest.raises(ValueError):
-        inliner.pin_arguments(func, (1, 2, 3))
-
-
 def test_get_transitions():
     with pytest.raises(ValueError):
         inliner.get_transitions((1, 2, 2), (1, 2, 3))
@@ -130,51 +120,80 @@ def test_get_transitions():
     with pytest.raises(ValueError):
         inliner.get_transitions((1, 2), (1, 2, 2))
 
-    with pytest.raises(ValueError):
-        inliner.get_transitions((1, 2, 3), (1, 2, 4, 5))
-
     olds = ("a", "c", "b", "d")
-    news = ("f", "g", "c", "d", "b", "a")
+    news_1 = ("f", "g", "c", "d", "b", "a")
+    news_2 = ("c", "d")
 
-    assert inliner.get_transitions(olds, news) == {0: 5, 1: 2, 2: 4, 3: 3}
+    assert inliner.get_transitions(olds, news_1) == {0: 5, 1: 2, 2: 4, 3: 3}
+    assert inliner.get_transitions(olds, news_2) == {1: 0, 3: 1}
 
 
-def test_get_new_func_attributes():
-    def pre_func_which_returns(a, b):
-        c = "Hello"
-        print(c + " " + a + " " + b)
-        return c + " " + a + " " + b
+def test_pin_arguments():
+    def func(a, b):
+        c = 4
+        print(str(a) + str(c))
 
-    def pre_func(a, b):
-        c = "Hello"
-        print(c + " " + a + " " + b)
-
-    def func(x, y):
-        z = x + 2 * y
-        return z ** 2
+        return a + b
 
     with pytest.raises(ValueError):
-        inliner.get_new_func_attributes(pre_func_which_returns, lambda x: x, ("a", "b"))
+        inliner.pin_arguments(func, dict(a=1))
 
-    # new_co_code = b"d\x02}\x03t\x00|\x03\x83\x01\x01\x00" + func.__code__.co_code
-    # new_co_consts = (None, 2, "bonjour")
-    # new_co_names = ("print",)
-    # new_co_varnames = ("x", "y", "z", "a")
+    with pytest.raises(ValueError):
+        inliner.pin_arguments(func, dict(a=1, b=2, c=3))
 
-    # new_results = new_co_code, new_co_consts, new_co_names, new_co_varnames
+    new_co_code = b"".join(
+        (
+            b"d\x01}\x00t\x00t\x01d\x02\x83\x01t\x01",
+            b"|\x00\x83\x01\x17\x00\x83\x01\x01\x00d\x02d\x03\x17\x00S\x00",
+        )
+    )
 
-    # assert inliner.get_new_func_attributes(pre_func, func) == new_results
+    new_co_consts = (None, 4, 42, 43)
+    new_co_varnames = co_varnames = ("c",)
+
+    inlined_func = inliner.pin_arguments(func, dict(a=42, b=43))
+
+    assert inlined_func.__code__.co_code == new_co_code
+    assert inlined_func.__code__.co_consts == new_co_consts
+    assert inlined_func.__code__.co_varnames == new_co_varnames
 
 
-def test_inline():
-    def pre_func(a, b):
-        c = "Hello"
-        print(c + " " + a + " " + b)
+# def test_get_new_func_attributes():
+#     def pre_func_which_returns(a, b):
+#         c = "Hello"
+#         print(c + " " + a + " " + b)
+#         return c + " " + a + " " + b
 
-    def func(x, y):
-        z = x + 2 * y
-        return z ** 2
+#     def pre_func(a, b):
+#         c = "Hello"
+#         print(c + " " + a + " " + b)
 
-    inlined_func = inliner.inline(pre_func, func, ("One", "Two", "Three"))
+#     def func(x, y):
+#         z = x + 2 * y
+#         return z ** 2
 
-    assert func(3, 4) == inlined_func(3, 4)
+#     with pytest.raises(ValueError):
+#         inliner.get_new_func_attributes(pre_func_which_returns, lambda x: x, ("a", "b"))
+
+#     # new_co_code = b"d\x02}\x03t\x00|\x03\x83\x01\x01\x00" + func.__code__.co_code
+#     # new_co_consts = (None, 2, "bonjour")
+#     # new_co_names = ("print",)
+#     # new_co_varnames = ("x", "y", "z", "a")
+
+#     # new_results = new_co_code, new_co_consts, new_co_names, new_co_varnames
+
+#     # assert inliner.get_new_func_attributes(pre_func, func) == new_results
+
+
+# def test_inline():
+#     def pre_func(a, b):
+#         c = "Hello"
+#         print(c + " " + a + " " + b)
+
+#     def func(x, y):
+#         z = x + 2 * y
+#         return z ** 2
+
+#     inlined_func = inliner.inline(pre_func, func, ("One", "Two", "Three"))
+
+#     assert func(3, 4) == inlined_func(3, 4)

@@ -1,7 +1,7 @@
 from inspect import signature
 import re
 from types import CodeType, FunctionType
-from typing import Any, Callable, Dict, Tuple
+from typing import Any, Dict, Tuple
 
 
 class OpCode:
@@ -85,7 +85,7 @@ def get_bytecode(number: int) -> bytes:
     return bytes.fromhex(hex_number)
 
 
-def has_freevar(func: Callable) -> bool:
+def has_freevar(func: FunctionType) -> bool:
     """Return True is `func` has at least one freevar (i.e. is decorated).
 
     Else return False.
@@ -93,7 +93,7 @@ def has_freevar(func: Callable) -> bool:
     return len(func.__code__.co_freevars) != 0
 
 
-def has_no_return(func: Callable) -> bool:
+def has_no_return(func: FunctionType) -> bool:
     """Return True if `func` returns nothing, else return False"""
 
     code = func.__code__
@@ -155,7 +155,36 @@ def key2value(sources: Tuple, dests: Tuple, source2dest: Dict) -> Tuple:
     return new_sources, new_dests, transitions
 
 
-def pin_arguments(func, arguments):
+def get_transitions(olds: Tuple, news: Tuple) -> Dict[int, int]:
+    """Returns a dictionnary where a key represents a position of an item in olds and
+    a value represents the position of the same item in news.
+
+    If an element of `olds` is not in `news`, then the corresponding value will be
+    `None`.
+
+    Exemples:
+    olds = ("a", "c", "b", "d")
+    news_1 = ("f", "g", "c", "d", "b", "a")
+    news_2 = ("c", "d")
+
+    get_transitions(olds, news_1) = {0: 5, 1: 2, 2: 4, 3: 3}
+    get_transitions(olds, news_2) = {1: 0, 3: 1}
+
+    `olds` and `news` should not have any duplicates, else a ValueError is raised.
+    """
+    if has_duplicates(olds):
+        raise ValueError("`olds` has duplicates")
+
+    if has_duplicates(news):
+        raise ValueError("`news` has duplicates")
+
+    return {
+        index_old: news.index(old)
+        for index_old, old in [(olds.index(old), old) for old in olds if old in news]
+    }
+
+
+def pin_arguments(func: FunctionType, arguments: dict):
     """Transform `func` in a function with no arguments.
 
     Example:
@@ -164,7 +193,7 @@ def pin_arguments(func, arguments):
 
         return a + b
 
-    The function returned by pin_arguments(func, (42, 34)) is equivalent to:
+    The function returned by pin_arguments(func, {"a": 42, "b": 34}) is equivalent to:
 
     def pinned_func():
         print(42)
@@ -174,42 +203,82 @@ def pin_arguments(func, arguments):
     This function is in some ways equivalent to functools.partials but with a faster
     runtime.
 
-    `arguments` list should contain the same number of elements than `func` has
-    arguments, else a ValueError is raised.
+    `arguments` keys should be identical as `func` arguments names else a ValueError is
+    raised.
     """
 
-    if len(signature(func).parameters) != len(arguments):
-        raise ValueError("`arguments` do not fit with `func` arguments.")
+    if signature(func).parameters.keys() != set(arguments):
+        raise ValueError("`arguments` and `func` arguments do not correspond")
 
+    func_code = func.__code__
+    func_co_code = func_code.co_code
+    func_co_const = func_code.co_consts
+    func_co_varnames = func_code.co_varnames
 
-def get_transitions(olds: Tuple[Any, ...], news: Tuple[Any, ...]) -> Dict[int, int]:
-    """Returns a dictionnary where a key represents a position of an item in olds and
-    a value represents the position of the same item in news.
+    new_co_consts = remove_duplicates(func_co_const + tuple(arguments.values()))
+    new_co_varnames = tuple(item for item in func_co_varnames if item not in arguments)
 
-    Exemples:
-    olds = ("a", "c", "b", "d")
-    news = ("f", "g", "c", "d", "b", "a")
+    transitions_co_varnames2_co_consts = {
+        func_co_varnames.index(key): new_co_consts.index(value)
+        for key, value in arguments.items()
+    }
 
-    get_transitions(olds, news) = {0: 5, 1: 2, 2: 4, 3: 3}
+    load_fast_2load_const_transitions = {
+        OpCode.LOAD_FAST + get_bytecode(key): OpCode.LOAD_CONST + get_bytecode(value)
+        for key, value in transitions_co_varnames2_co_consts.items()
+    }
 
-    `olds` and `news` should not have any duplicates, else a ValueError is raised.
-    All elements of `olds` should be in `news`, else a ValueError is raised.
-    """
-    if has_duplicates(olds):
-        raise ValueError("`olds` has duplicates")
+    new_co_code = multiple_replace(func_co_code, load_fast_2load_const_transitions)
 
-    if has_duplicates(news):
-        raise ValueError("`news` has duplicates")
+    transitions_co_varnames = get_transitions(func_co_varnames, new_co_varnames)
 
-    if not set(olds) <= set(news):
-        raise ValueError("At least on item of `olds` is not in `news`")
+    load_fast_transitions = {
+        OpCode.LOAD_FAST + get_bytecode(key): OpCode.LOAD_FAST + get_bytecode(value)
+        for key, value in transitions_co_varnames.items()
+    }
 
-    return {index: news.index(old) for index, old in enumerate(olds)}
+    store_fast_transitions = {
+        OpCode.STORE_FAST + get_bytecode(key): OpCode.STORE_FAST + get_bytecode(value)
+        for key, value in transitions_co_varnames.items()
+    }
+
+    new_co_code = multiple_replace(new_co_code, load_fast_transitions)
+    new_co_code = multiple_replace(new_co_code, store_fast_transitions)
+
+    new_func = FunctionType(
+        func.__code__,
+        func.__globals__,
+        func.__name__,
+        func.__defaults__,
+        func.__closure__,
+    )
+
+    nfcode = new_func.__code__
+
+    new_func.__code__ = CodeType(
+        0,
+        0,
+        len(new_co_varnames),
+        nfcode.co_stacksize,
+        nfcode.co_flags,
+        new_co_code,
+        new_co_consts,
+        nfcode.co_names,
+        new_co_varnames,
+        nfcode.co_filename,
+        nfcode.co_name,
+        nfcode.co_firstlineno,
+        nfcode.co_lnotab,
+        nfcode.co_freevars,
+        nfcode.co_cellvars,
+    )
+
+    return new_func
 
 
 def get_new_func_attributes(
-    pre_func: FunctionType, func: FunctionType, pre_func_arguments: Tuple[Any, ...]
-) -> Tuple[bytes, Tuple[Any, ...], Tuple[Any, ...], Tuple[Any, ...]]:
+    pre_func: FunctionType, func: FunctionType, pre_func_arguments: Tuple
+) -> Tuple[bytes, Tuple, Tuple, Tuple]:
     """Insert `prefunc` at the beginning of `func` and returns a co_code, co_consts,
        co_names & co_varnames of the new function.
 
