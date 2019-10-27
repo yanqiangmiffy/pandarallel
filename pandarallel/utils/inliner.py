@@ -85,14 +85,6 @@ def get_bytecode(number: int) -> bytes:
     return bytes.fromhex(hex_number)
 
 
-def has_freevar(func: FunctionType) -> bool:
-    """Return True is `func` has at least one freevar (i.e. is decorated).
-
-    Else return False.
-    """
-    return len(func.__code__.co_freevars) != 0
-
-
 def has_no_return(func: FunctionType) -> bool:
     """Return True if `func` returns nothing, else return False"""
 
@@ -148,6 +140,7 @@ def key2value(sources: Tuple, dests: Tuple, source2dest: Dict) -> Tuple:
 
     new_sources = tuple(item for item in sources if item not in source2dest)
     new_dests = remove_duplicates(dests + tuple(source2dest.values()))
+
     transitions = {
         sources.index(key): new_dests.index(value) for key, value in source2dest.items()
     }
@@ -184,66 +177,93 @@ def get_transitions(olds: Tuple, news: Tuple) -> Dict[int, int]:
     }
 
 
+def get_b_transitions(
+    transitions: Dict[int, int], byte_source: bytes, byte_dest: bytes
+):
+    return {
+        byte_source + get_bytecode(key): byte_dest + get_bytecode(value)
+        for key, value in transitions.items()
+    }
+
+
+def are_functions_equivalent(l_func, r_func):
+    """Return True if `l_func` and `r_func` are equivalent"""
+    l_code, r_code = l_func.__code__, r_func.__code__
+
+    trans_co_consts = get_transitions(l_code.co_consts, r_code.co_consts)
+    trans_co_names = get_transitions(l_code.co_names, r_code.co_names)
+    trans_co_varnames = get_transitions(l_code.co_varnames, r_code.co_varnames)
+
+    transitions = {
+        **get_b_transitions(trans_co_consts, OpCode.LOAD_CONST, OpCode.LOAD_CONST),
+        **get_b_transitions(trans_co_names, OpCode.LOAD_GLOBAL, OpCode.LOAD_GLOBAL),
+        **get_b_transitions(trans_co_varnames, OpCode.LOAD_FAST, OpCode.LOAD_FAST),
+        **get_b_transitions(trans_co_varnames, OpCode.STORE_FAST, OpCode.STORE_FAST),
+    }
+
+    new_l_co_code = multiple_replace(l_code.co_code, transitions)
+
+    co_code_cond = new_l_co_code == r_code.co_code
+    co_consts_cond = set(l_code.co_consts) == set(r_code.co_consts)
+    co_names_cond = set(l_code.co_names) == set(l_code.co_names)
+    co_varnames_cond = set(l_code.co_varnames) == set(l_code.co_varnames)
+
+    return co_code_cond and co_consts_cond and co_names_cond and co_varnames_cond
+
+
 def pin_arguments(func: FunctionType, arguments: dict):
     """Transform `func` in a function with no arguments.
 
     Example:
+
     def func(a, b):
-        print(a)
+        c = 4
+        print(str(a) + str(c))
 
-        return a + b
+        return b
 
-    The function returned by pin_arguments(func, {"a": 42, "b": 34}) is equivalent to:
+    The function returned by pin_arguments(func, {"a": 10, "b": 11}) is equivalent to:
 
     def pinned_func():
-        print(42)
+        c = 4
+        print(str(10) + str(c))
 
-        return 42 + 34
+        return 11
 
     This function is in some ways equivalent to functools.partials but with a faster
     runtime.
 
-    `arguments` keys should be identical as `func` arguments names else a ValueError is
+    `arguments` keys should be identical as `func` arguments names else a Type is
     raised.
     """
 
     if signature(func).parameters.keys() != set(arguments):
-        raise ValueError("`arguments` and `func` arguments do not correspond")
+        raise TypeError("`arguments` and `func` arguments do not correspond")
 
     func_code = func.__code__
     func_co_code = func_code.co_code
-    func_co_const = func_code.co_consts
+    func_co_consts = func_code.co_consts
     func_co_varnames = func_code.co_varnames
 
-    new_co_consts = remove_duplicates(func_co_const + tuple(arguments.values()))
+    new_co_consts = remove_duplicates(func_co_consts + tuple(arguments.values()))
     new_co_varnames = tuple(item for item in func_co_varnames if item not in arguments)
 
-    transitions_co_varnames2_co_consts = {
+    trans_co_varnames2_co_consts = {
         func_co_varnames.index(key): new_co_consts.index(value)
         for key, value in arguments.items()
     }
 
-    load_fast_2load_const_transitions = {
-        OpCode.LOAD_FAST + get_bytecode(key): OpCode.LOAD_CONST + get_bytecode(value)
-        for key, value in transitions_co_varnames2_co_consts.items()
+    trans_co_varnames = get_transitions(func_co_varnames, new_co_varnames)
+
+    transitions = {
+        **get_b_transitions(
+            trans_co_varnames2_co_consts, OpCode.LOAD_FAST, OpCode.LOAD_CONST
+        ),
+        **get_b_transitions(trans_co_varnames, OpCode.LOAD_FAST, OpCode.LOAD_FAST),
+        **get_b_transitions(trans_co_varnames, OpCode.STORE_FAST, OpCode.STORE_FAST),
     }
 
-    new_co_code = multiple_replace(func_co_code, load_fast_2load_const_transitions)
-
-    transitions_co_varnames = get_transitions(func_co_varnames, new_co_varnames)
-
-    load_fast_transitions = {
-        OpCode.LOAD_FAST + get_bytecode(key): OpCode.LOAD_FAST + get_bytecode(value)
-        for key, value in transitions_co_varnames.items()
-    }
-
-    store_fast_transitions = {
-        OpCode.STORE_FAST + get_bytecode(key): OpCode.STORE_FAST + get_bytecode(value)
-        for key, value in transitions_co_varnames.items()
-    }
-
-    new_co_code = multiple_replace(new_co_code, load_fast_transitions)
-    new_co_code = multiple_replace(new_co_code, store_fast_transitions)
+    new_co_code = multiple_replace(func_co_code, transitions)
 
     new_func = FunctionType(
         func.__code__,
@@ -277,14 +297,14 @@ def pin_arguments(func: FunctionType, arguments: dict):
 
 
 def get_new_func_attributes(
-    pre_func: FunctionType, func: FunctionType, pre_func_arguments: Tuple
+    pre_func: FunctionType, func: FunctionType, pre_func_arguments: dict
 ) -> Tuple[bytes, Tuple, Tuple, Tuple]:
     """Insert `prefunc` at the beginning of `func` and returns a co_code, co_consts,
        co_names & co_varnames of the new function.
 
     `pre_func` should not have a return statement (else a ValueError is raised).
     `pre_func_arguments` should contain exactly the same number of items than the
-    arguments taken by `pre_func` (else a TypeError is raised)
+    arguments taken by `pre_func` (else a Type is raised)
 
     Example:
 
@@ -296,7 +316,8 @@ def get_new_func_attributes(
         z = x + 2 * y
         return z ** 2
 
-    The items returned by get_new_func_attributes(pre_func, func, ("how are", "you?"))
+    The items returned by
+    get_new_func_attributes(pre_func, func, dict(a="how are", b="you))
     correspond to the following function
 
     def inlined(x, y):
@@ -309,11 +330,13 @@ def get_new_func_attributes(
     if not has_no_return(pre_func):
         raise ValueError("`pre_func` returns something")
 
-    pre_func_code = pre_func.__code__
-    pre_func_co_code = pre_func_code.co_code
-    pre_func_co_consts = pre_func_code.co_consts
-    pre_func_co_names = pre_func_code.co_names
-    pre_func_co_varnames = pre_func_code.co_varnames
+    pinned_pre_func = pin_arguments(pre_func, pre_func_arguments)
+
+    pinned_pre_func_code = pinned_pre_func.__code__
+    pinned_pre_func_co_code = pinned_pre_func_code.co_code
+    pinned_pre_func_co_consts = pinned_pre_func_code.co_consts
+    pinned_pre_func_co_names = pinned_pre_func_code.co_names
+    pinned_pre_func_co_varnames = pinned_pre_func_code.co_varnames
 
     func_code = func.__code__
     func_co_code = func_code.co_code
@@ -321,13 +344,16 @@ def get_new_func_attributes(
     func_co_names = func_code.co_names
     func_co_varnames = func_code.co_varnames
 
-    new_co_consts = remove_duplicates(func_co_consts + pre_func_co_consts)
-    new_co_names = remove_duplicates(func_co_names + pre_func_co_names)
-    new_co_varnames = remove_duplicates(func_co_varnames + pre_func_co_varnames)
+    new_co_consts = remove_duplicates(func_co_consts + pinned_pre_func_co_consts)
+    new_co_names = remove_duplicates(func_co_names + pinned_pre_func_co_names)
+    new_co_varnames = remove_duplicates(func_co_varnames + pinned_pre_func_co_varnames)
 
-    transitions_co_consts = get_transitions(pre_func_co_consts, new_co_consts)
-    transitions_co_names = get_transitions(pre_func_co_names, new_co_names)
-    transitions_co_varnames = get_transitions(pre_func_co_varnames, new_co_varnames)
+    transitions_co_consts = get_transitions(pinned_pre_func_co_consts, new_co_consts)
+    transitions_co_names = get_transitions(pinned_pre_func_co_names, new_co_names)
+
+    transitions_co_varnames = get_transitions(
+        pinned_pre_func_co_varnames, new_co_varnames
+    )
 
     load_const_transitions = {
         OpCode.LOAD_CONST + get_bytecode(key): OpCode.LOAD_CONST + get_bytecode(value)
@@ -349,22 +375,26 @@ def get_new_func_attributes(
         for key, value in transitions_co_varnames.items()
     }
 
-    pre_func_co_code = multiple_replace(pre_func_co_code, load_const_transitions)
-    pre_func_co_code = multiple_replace(pre_func_co_code, load_global_transitions)
-    pre_func_co_code = multiple_replace(pre_func_co_code, load_fast_transitions)
-    pre_func_co_code = multiple_replace(pre_func_co_code, store_fast_transitions)
+    pre_func_co_code = multiple_replace(pinned_pre_func_co_code, load_const_transitions)
 
-    new_co_code = pre_func_co_code[:-4] + func_co_code
+    pre_func_co_code = multiple_replace(
+        pinned_pre_func_co_code, load_global_transitions
+    )
+    pre_func_co_code = multiple_replace(pinned_pre_func_co_code, load_fast_transitions)
+    pre_func_co_code = multiple_replace(pinned_pre_func_co_code, store_fast_transitions)
+
+    new_co_code = pinned_pre_func_co_code[:-4] + func_co_code
 
     return new_co_code, new_co_consts, new_co_names, new_co_varnames
 
 
-def inline(pre_func: FunctionType, func: FunctionType):
+def inline(pre_func: FunctionType, func: FunctionType, pre_func_arguments: dict):
     """Insert `prefunc` at the beginning of `func` and return the corresponding
     function.
 
     `pre_func` should not have a return statement (else a ValueError is raised).
-    `pre_func` should not have any argument (else a TypeError is raised)
+    `pre_func_arguments` keys should be identical as `func` arguments names else a
+    TypeError is raised.
 
     This approach takes less CPU instructions than the standard decorator approach.
 
@@ -395,7 +425,7 @@ def inline(pre_func: FunctionType, func: FunctionType):
         func.__closure__,
     )
 
-    new_attributes = get_new_func_attributes(pre_func, func)
+    new_attributes = get_new_func_attributes(pre_func, func, pre_func_arguments)
     new_co_code, new_co_consts, new_co_names, new_co_varnames = new_attributes
 
     nfcode = new_func.__code__

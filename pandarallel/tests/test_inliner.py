@@ -45,24 +45,6 @@ def test_get_bytecode():
     assert inliner.get_bytecode(255) == b"\xFF"
 
 
-def test_has_freevar():
-    def decorator(func):
-        def wrapper(*args, **kwargs):
-            return func(*args, **kwargs)
-
-        return wrapper
-
-    @decorator
-    def function_with_freevar():
-        pass
-
-    def function_without_freevar():
-        pass
-
-    assert inliner.has_freevar(function_with_freevar)
-    assert not inliner.has_freevar(function_without_freevar)
-
-
 def test_has_no_return():
     def func_return_nothing(a, b):
         if a > b:
@@ -128,61 +110,86 @@ def test_get_transitions():
     assert inliner.get_transitions(olds, news_2) == {1: 0, 3: 1}
 
 
+def test_get_b_transitions():
+    transitions = {1: 3, 2: 5, 3: 6}
+    byte_source = inliner.OpCode.LOAD_CONST
+    byte_dest = inliner.OpCode.STORE_FAST
+
+    bytes_transitions = inliner.get_b_transitions(transitions, byte_source, byte_dest)
+
+    expected = {
+        (byte_source + b"\x01"): (byte_dest + b"\x03"),
+        (byte_source + b"\x02"): (byte_dest + b"\x05"),
+        (byte_source + b"\x03"): (byte_dest + b"\x06"),
+    }
+
+    assert bytes_transitions == expected
+
+
+def test_are_functions_equivalent():
+    def a_func(x, y):
+        c = 3
+        print(c + str(x + y))
+        return x * y
+
+    def another_func(x, y):
+        c = 4
+        print(c + str(x + y))
+        return x * y
+
+    assert inliner.are_functions_equivalent(a_func, a_func)
+    assert not inliner.are_functions_equivalent(a_func, another_func)
+
+
 def test_pin_arguments():
     def func(a, b):
         c = 4
         print(str(a) + str(c))
 
-        return a + b
+        return b
 
-    with pytest.raises(ValueError):
+    def expected_pinned_func():
+        c = 4
+        print(str(10) + str(c))
+
+        return 11
+
+    with pytest.raises(TypeError):
         inliner.pin_arguments(func, dict(a=1))
 
-    with pytest.raises(ValueError):
+    with pytest.raises(TypeError):
         inliner.pin_arguments(func, dict(a=1, b=2, c=3))
 
-    new_co_code = b"".join(
-        (
-            b"d\x01}\x00t\x00t\x01d\x02\x83\x01t\x01",
-            b"|\x00\x83\x01\x17\x00\x83\x01\x01\x00d\x02d\x03\x17\x00S\x00",
-        )
-    )
+    pinned_func = inliner.pin_arguments(func, dict(a=10, b=11))
 
-    new_co_consts = (None, 4, 42, 43)
-    new_co_varnames = co_varnames = ("c",)
-
-    inlined_func = inliner.pin_arguments(func, dict(a=42, b=43))
-
-    assert inlined_func.__code__.co_code == new_co_code
-    assert inlined_func.__code__.co_consts == new_co_consts
-    assert inlined_func.__code__.co_varnames == new_co_varnames
+    assert inliner.are_functions_equivalent(pinned_func, expected_pinned_func)
 
 
-# def test_get_new_func_attributes():
-#     def pre_func_which_returns(a, b):
-#         c = "Hello"
-#         print(c + " " + a + " " + b)
-#         return c + " " + a + " " + b
+def test_get_new_func_attributes():
+    def pre_func_which_returns(a, b):
+        c = "Hello"
+        print(c + " " + a + " " + b)
+        return c + " " + a + " " + b
 
-#     def pre_func(a, b):
-#         c = "Hello"
-#         print(c + " " + a + " " + b)
+    def pre_func(a, b):
+        c = "Hello"
+        print(c + " " + a + " " + b)
 
-#     def func(x, y):
-#         z = x + 2 * y
-#         return z ** 2
+    def func(x, y):
+        z = x + 2 * y
+        return z ** 2
 
-#     with pytest.raises(ValueError):
-#         inliner.get_new_func_attributes(pre_func_which_returns, lambda x: x, ("a", "b"))
+    with pytest.raises(ValueError):
+        inliner.get_new_func_attributes(pre_func_which_returns, lambda x: x, ("a", "b"))
 
-#     # new_co_code = b"d\x02}\x03t\x00|\x03\x83\x01\x01\x00" + func.__code__.co_code
-#     # new_co_consts = (None, 2, "bonjour")
-#     # new_co_names = ("print",)
-#     # new_co_varnames = ("x", "y", "z", "a")
+    # new_co_code = b"d\x02}\x03t\x00|\x03\x83\x01\x01\x00" + func.__code__.co_code
+    # new_co_consts = (None, 2, "bonjour")
+    # new_co_names = ("print",)
+    # new_co_varnames = ("x", "y", "z", "a")
 
-#     # new_results = new_co_code, new_co_consts, new_co_names, new_co_varnames
+    # new_results = new_co_code, new_co_consts, new_co_names, new_co_varnames
 
-#     # assert inliner.get_new_func_attributes(pre_func, func) == new_results
+    # assert inliner.get_new_func_attributes(pre_func, func) == new_results
 
 
 # def test_inline():
