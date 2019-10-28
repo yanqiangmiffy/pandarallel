@@ -1,6 +1,7 @@
 import pytest
 
 from pandarallel.utils import inliner
+import math
 
 
 def test_multiple_find():
@@ -130,11 +131,11 @@ def test_are_functions_equivalent():
     def a_func(x, y):
         c = 3
         print(c + str(x + y))
-        return x * y
+        return x * math.sin(y)
 
     def another_func(x, y):
         c = 4
-        print(c + str(x + y))
+        print(c + str(x + math.sin(y)))
         return x * y
 
     assert inliner.are_functions_equivalent(a_func, a_func)
@@ -171,13 +172,13 @@ def test_inline():
         print(a + " " + b + " " + c)
 
     def func(x, y):
-        z = x + 2 * y
+        z = x + 2 * math.sin(y)
         return z ** 2
 
     def target_inlined_func(x, y):
         a = "hello"
         print(a + " " + "pretty" + " " + "world!")
-        z = x + 2 * y
+        z = x + 2 * math.sin(y)
         return z ** 2
 
     inlined_func = inliner.inline(pre_func, func, dict(b="pretty", c="world!"))

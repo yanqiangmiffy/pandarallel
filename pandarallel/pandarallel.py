@@ -1,23 +1,21 @@
-from ctypes import c_uint8
-import dill
-from inspect import getsourcelines
+import os
+import pickle
 from itertools import count
 from multiprocessing import Manager, Pool, cpu_count
-import os
-from pandas import DataFrame, Series
-from pandas.core.window import Rolling
-from pandas.core.groupby import DataFrameGroupBy
-from pandas.core.window import RollingGroupby
-import pickle
-import re
 from tempfile import NamedTemporaryFile
-from types import FunctionType, CodeType
+from types import CodeType, FunctionType
+
+import dill
+from pandas import DataFrame, Series
+from pandas.core.groupby import DataFrameGroupBy
+from pandas.core.window import Rolling, RollingGroupby
 
 from pandarallel.data_types.dataframe import DataFrame as DF
-from pandarallel.data_types.series import Series as S
-from pandarallel.data_types.series_rolling import SeriesRolling as SR
 from pandarallel.data_types.dataframe_groupby import DataFrameGroupBy as DFGB
 from pandarallel.data_types.rolling_groupby import RollingGroupBy as RGB
+from pandarallel.data_types.series import Series as S
+from pandarallel.data_types.series_rolling import SeriesRolling as SR
+from pandarallel.utils.inliner import inline
 from pandarallel.utils.progress_bars import ProgressBarsNotebookLab
 
 NB_WORKERS = cpu_count()
@@ -104,32 +102,36 @@ def create_temp_files(nb_files):
     ]
 
 
-# def wrap(context, progress_bar, index, queue, period):
-#     context["pandarallel_counter"] = count()
-#     context["pandarallel_queue"] = queue
+def pre_func(queue, index, period, counter, progression):
+    iteration = next(counter)
+    if not iteration % period:
+        queue.put_nowait((progression, (index, iteration)))
 
-#     def wrapper(func):
-#         if progress_bar:
-#             to_add = """
-#     iteration = next(pandarallel_counter)
-#     if not iteration % {period}:
-#         pandarallel_queue.put_nowait(({progression}, ({index}, iteration)))
-# """.format(
-#                 period=period, progression=PROGRESSION, index=index
-#             )
 
-#             wrapped_func_source = inliner_trick(func, to_add)
+def progress_wrapper(progress_bar, queue, index, period):
+    counter = count()
 
-#             exec(wrapped_func_source, context)
-#             return context["progress_func"]
+    def wrapper(func):
+        if progress_bar:
+            wrapped_func = inline(
+                pre_func,
+                func,
+                dict(
+                    queue=queue,
+                    index=index,
+                    period=period,
+                    counter=counter,
+                    progression=PROGRESSION,
+                ),
+            )
+            return wrapped_func
 
-#         return func
+        return func
 
-#     return wrapper
+    return wrapper
 
 
 def get_workers_args(
-    context,
     use_memory_fs,
     nb_workers,
     progress_bar,
@@ -182,7 +184,9 @@ def get_workers_args(
                         index,
                         worker_meta_args,
                         queue,
-                        dill.dumps(func),
+                        dill.dumps(
+                            progress_wrapper(progress_bar, queue, index, 100)(func)
+                        ),
                         args,
                         kwargs,
                     ),
@@ -212,7 +216,7 @@ def get_workers_result(
 
     finished_workers = [False] * nb_workers
 
-    generation = 0
+    generation = count()
 
     while not all(finished_workers):
         message_type, message = queue.get()
@@ -225,10 +229,8 @@ def get_workers_result(
             worker_index, progression = message
             progresses[worker_index] = progression
 
-            if generation % nb_workers == 0:
+            if next(generation) % nb_workers == 0:
                 progress_bars.update(progresses)
-
-            generation += 1
 
         elif message_type is VALUE:
             worker_index = message
@@ -259,7 +261,6 @@ def parallelize(
     nb_workers,
     use_memory_fs,
     progress_bar,
-    context,
     get_chunks,
     worker,
     reduce,
@@ -274,7 +275,6 @@ def parallelize(
         queue = manager.Queue()
 
         workers_args, chunk_lengths, input_files, output_files = get_workers_args(
-            context,
             use_memory_fs,
             nb_workers,
             progress_bar,
@@ -317,7 +317,6 @@ class pandarallel:
     @classmethod
     def initialize(
         cls,
-        context,
         shm_size_mb=None,
         nb_workers=NB_WORKERS,
         progress_bar=False,
@@ -392,8 +391,8 @@ class pandarallel:
 
         nbw = nb_workers
 
-        bargs = (nbw, use_memory_fs, progress_bar, context)
-        bargs0 = (nbw, use_memory_fs, False, context)
+        bargs = (nbw, use_memory_fs, progress_bar)
+        bargs0 = (nbw, use_memory_fs, False)
 
         # DataFrame
         args = bargs + (DF.Apply.get_chunks, DF.Apply.worker, DF.reduce)
