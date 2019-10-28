@@ -296,36 +296,42 @@ def pin_arguments(func: FunctionType, arguments: dict):
     return new_func
 
 
-def get_new_func_attributes(
-    pre_func: FunctionType, func: FunctionType, pre_func_arguments: dict
-) -> Tuple[bytes, Tuple, Tuple, Tuple]:
-    """Insert `prefunc` at the beginning of `func` and returns a co_code, co_consts,
-       co_names & co_varnames of the new function.
+def inline(pre_func: FunctionType, func: FunctionType, pre_func_arguments: dict):
+    """Insert `prefunc` at the beginning of `func` and return the corresponding
+    function.
 
     `pre_func` should not have a return statement (else a ValueError is raised).
-    `pre_func_arguments` should contain exactly the same number of items than the
-    arguments taken by `pre_func` (else a Type is raised)
+    `pre_func_arguments` keys should be identical as `func` arguments names else a
+    TypeError is raised.
+
+    This approach takes less CPU instructions than the standard decorator approach.
 
     Example:
 
-    def pre_func(a, b):
-        c = "Hello"
-        print(c + " " + a + " " + b)
+    def pre_func(b, c):
+        a = "hello"
+        print(a + " " + b + " " + c)
 
     def func(x, y):
         z = x + 2 * y
         return z ** 2
 
-    The items returned by
-    get_new_func_attributes(pre_func, func, dict(a="how are", b="you))
-    correspond to the following function
+    The returned function corresponds to:
 
     def inlined(x, y):
-        c = "Hello"
-        print(c + " " + "how are" + " " + "you?")
+        a = "hello"
+        print(a)
         z = x + 2 * y
         return z ** 2
     """
+
+    new_func = FunctionType(
+        func.__code__,
+        func.__globals__,
+        func.__name__,
+        func.__defaults__,
+        func.__closure__,
+    )
 
     if not has_no_return(pre_func):
         raise ValueError("`pre_func` returns something")
@@ -348,85 +354,19 @@ def get_new_func_attributes(
     new_co_names = remove_duplicates(func_co_names + pinned_pre_func_co_names)
     new_co_varnames = remove_duplicates(func_co_varnames + pinned_pre_func_co_varnames)
 
-    transitions_co_consts = get_transitions(pinned_pre_func_co_consts, new_co_consts)
-    transitions_co_names = get_transitions(pinned_pre_func_co_names, new_co_names)
+    trans_co_consts = get_transitions(pinned_pre_func_co_consts, new_co_consts)
+    trans_co_names = get_transitions(pinned_pre_func_co_names, new_co_names)
+    trans_co_varnames = get_transitions(pinned_pre_func_co_varnames, new_co_varnames)
 
-    transitions_co_varnames = get_transitions(
-        pinned_pre_func_co_varnames, new_co_varnames
-    )
-
-    load_const_transitions = {
-        OpCode.LOAD_CONST + get_bytecode(key): OpCode.LOAD_CONST + get_bytecode(value)
-        for key, value in transitions_co_consts.items()
+    transitions = {
+        **get_b_transitions(trans_co_consts, OpCode.LOAD_CONST, OpCode.LOAD_CONST),
+        **get_b_transitions(trans_co_names, OpCode.LOAD_GLOBAL, OpCode.LOAD_GLOBAL),
+        **get_b_transitions(trans_co_varnames, OpCode.LOAD_FAST, OpCode.LOAD_FAST),
+        **get_b_transitions(trans_co_varnames, OpCode.STORE_FAST, OpCode.STORE_FAST),
     }
 
-    load_global_transitions = {
-        OpCode.LOAD_GLOBAL + get_bytecode(key): OpCode.LOAD_GLOBAL + get_bytecode(value)
-        for key, value in transitions_co_names.items()
-    }
-
-    load_fast_transitions = {
-        OpCode.LOAD_FAST + get_bytecode(key): OpCode.LOAD_FAST + get_bytecode(value)
-        for key, value in transitions_co_varnames.items()
-    }
-
-    store_fast_transitions = {
-        OpCode.STORE_FAST + get_bytecode(key): OpCode.STORE_FAST + get_bytecode(value)
-        for key, value in transitions_co_varnames.items()
-    }
-
-    pre_func_co_code = multiple_replace(pinned_pre_func_co_code, load_const_transitions)
-
-    pre_func_co_code = multiple_replace(
-        pinned_pre_func_co_code, load_global_transitions
-    )
-    pre_func_co_code = multiple_replace(pinned_pre_func_co_code, load_fast_transitions)
-    pre_func_co_code = multiple_replace(pinned_pre_func_co_code, store_fast_transitions)
-
+    pinned_pre_func_co_code = multiple_replace(pinned_pre_func_co_code, transitions)
     new_co_code = pinned_pre_func_co_code[:-4] + func_co_code
-
-    return new_co_code, new_co_consts, new_co_names, new_co_varnames
-
-
-def inline(pre_func: FunctionType, func: FunctionType, pre_func_arguments: dict):
-    """Insert `prefunc` at the beginning of `func` and return the corresponding
-    function.
-
-    `pre_func` should not have a return statement (else a ValueError is raised).
-    `pre_func_arguments` keys should be identical as `func` arguments names else a
-    TypeError is raised.
-
-    This approach takes less CPU instructions than the standard decorator approach.
-
-    Example:
-
-    def pre_func():
-        a = "bonjour"
-        print(a)
-
-    def func(x, y):
-        z = x + 2 * y
-        return z ** 2
-
-    The returned function corresponds to:
-
-    def inlined(x, y):
-        a = "bonjour"
-        print(a)
-        z = x + 2 * y
-        return z ** 2
-    """
-
-    new_func = FunctionType(
-        func.__code__,
-        func.__globals__,
-        func.__name__,
-        func.__defaults__,
-        func.__closure__,
-    )
-
-    new_attributes = get_new_func_attributes(pre_func, func, pre_func_arguments)
-    new_co_code, new_co_consts, new_co_names, new_co_varnames = new_attributes
 
     nfcode = new_func.__code__
 
