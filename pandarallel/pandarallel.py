@@ -186,7 +186,9 @@ def get_workers_args(
                 index,
                 worker_meta_args,
                 queue,
-                dill.dumps(func),
+                dill.dumps(
+                    progress_wrapper(progress_bar, queue, index, chunk_length)(func)
+                ),
                 args,
                 kwargs,
             )
