@@ -5,12 +5,14 @@ from typing import Any, Dict, Tuple
 
 
 class OpCode:
+    LOAD_ATTR = b"j"
     LOAD_CONST = b"d"
     LOAD_FAST = b"|"
     LOAD_GLOBAL = b"t"
     LOAD_METHOD = b"\xa0"
-    STORE_FAST = b"}"
     RETURN_VALUE = b"S"
+    STORE_ATTR = b"_"
+    STORE_FAST = b"}"
 
 
 def multiple_find(bytecode: bytes, sub_bytecode: bytes) -> Tuple[int, ...]:
@@ -199,6 +201,8 @@ def are_functions_equivalent(l_func, r_func):
         **get_b_transitions(trans_co_consts, OpCode.LOAD_CONST, OpCode.LOAD_CONST),
         **get_b_transitions(trans_co_names, OpCode.LOAD_GLOBAL, OpCode.LOAD_GLOBAL),
         **get_b_transitions(trans_co_names, OpCode.LOAD_METHOD, OpCode.LOAD_METHOD),
+        **get_b_transitions(trans_co_names, OpCode.LOAD_ATTR, OpCode.LOAD_ATTR),
+        **get_b_transitions(trans_co_names, OpCode.STORE_ATTR, OpCode.STORE_ATTR),
         **get_b_transitions(trans_co_varnames, OpCode.LOAD_FAST, OpCode.LOAD_FAST),
         **get_b_transitions(trans_co_varnames, OpCode.STORE_FAST, OpCode.STORE_FAST),
     }
@@ -364,6 +368,8 @@ def inline(pre_func: FunctionType, func: FunctionType, pre_func_arguments: dict)
         **get_b_transitions(trans_co_consts, OpCode.LOAD_CONST, OpCode.LOAD_CONST),
         **get_b_transitions(trans_co_names, OpCode.LOAD_GLOBAL, OpCode.LOAD_GLOBAL),
         **get_b_transitions(trans_co_names, OpCode.LOAD_METHOD, OpCode.LOAD_METHOD),
+        **get_b_transitions(trans_co_names, OpCode.LOAD_ATTR, OpCode.LOAD_ATTR),
+        **get_b_transitions(trans_co_names, OpCode.STORE_ATTR, OpCode.STORE_ATTR),
         **get_b_transitions(trans_co_varnames, OpCode.LOAD_FAST, OpCode.LOAD_FAST),
         **get_b_transitions(trans_co_varnames, OpCode.STORE_FAST, OpCode.STORE_FAST),
     }

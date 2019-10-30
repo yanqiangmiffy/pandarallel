@@ -18,6 +18,8 @@ from pandarallel.data_types.series_rolling import SeriesRolling as SR
 from pandarallel.utils.inliner import inline
 from pandarallel.utils.progress_bars import ProgressBarsNotebookLab
 
+from time import time
+
 NB_WORKERS = cpu_count()
 PREFIX = "pandarallel_"
 PREFIX_INPUT = PREFIX + "input_"
@@ -28,6 +30,12 @@ MEMORY_FS_ROOT = "/dev/shm"
 INPUT_FILE_READ, PROGRESSION, VALUE, ERROR = list(range(4))
 
 _func = None
+
+
+class ProgressState:
+    last_put_iteration = None
+    next_put_iteration = None
+    last_put_time = None
 
 
 def worker_init(func):
@@ -102,26 +110,40 @@ def create_temp_files(nb_files):
     ]
 
 
-def pre_func(queue, index, period, counter, progression):
+def progress_pre_func(queue, index, counter, progression, state, time):
     iteration = next(counter)
-    if not iteration % period:
+
+    if iteration == state.next_put_iteration:
+        time_now = time()
         queue.put_nowait((progression, (index, iteration)))
 
+        delta_t = time_now - state.last_put_time
+        delta_i = iteration - state.last_put_iteration
 
-def progress_wrapper(progress_bar, queue, index, period):
+        state.next_put_iteration += int((delta_i / delta_t) * 0.25)
+        state.last_put_iteration = iteration
+        state.last_put_time = time_now
+
+
+def progress_wrapper(progress_bar, queue, index, chunk_size):
     counter = count()
+    state = ProgressState()
+    state.last_put_iteration = 0
+    state.next_put_iteration = chunk_size // 100
+    state.last_put_time = time()
 
     def wrapper(func):
         if progress_bar:
             wrapped_func = inline(
-                pre_func,
+                progress_pre_func,
                 func,
                 dict(
                     queue=queue,
                     index=index,
-                    period=period,
                     counter=counter,
                     progression=PROGRESSION,
+                    state=state,
+                    time=time,
                 ),
             )
             return wrapped_func
@@ -185,7 +207,9 @@ def get_workers_args(
                         worker_meta_args,
                         queue,
                         dill.dumps(
-                            progress_wrapper(progress_bar, queue, index, 100)(func)
+                            progress_wrapper(progress_bar, queue, index, len(chunk))(
+                                func
+                            )
                         ),
                         args,
                         kwargs,
@@ -230,6 +254,7 @@ def get_workers_result(
             progresses[worker_index] = progression
 
             if next(generation) % nb_workers == 0:
+                toto = 1 + 1
                 progress_bars.update(progresses)
 
         elif message_type is VALUE:
