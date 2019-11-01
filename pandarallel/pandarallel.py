@@ -441,7 +441,7 @@ class pandarallel:
         Rolling.parallel_apply = parallelize(*args, **kwargs)
 
         # DataFrame GroupBy
-        args = bargs0 + (DFGB.get_chunks, DFGB.worker, DFGB.reduce)
+        args = bargs + (DFGB.get_chunks, DFGB.worker, DFGB.reduce)
         kwargs = dict(get_reduce_meta_args=DFGB.get_index)
         DataFrameGroupBy.parallel_apply = parallelize(*args, **kwargs)
 

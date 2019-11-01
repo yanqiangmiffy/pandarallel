@@ -4,6 +4,9 @@ from pandarallel.utils import inliner
 import math
 
 
+def test_pairwise():
+    assert tuple(inliner.pairwise((3, 4, 5, 6, 7, 8))) == ((3, 4), (5, 6), (7, 8))
+
 def test_multiple_find():
     bytecode = b"\x01\x03\x04\x02\x01\x05\x01"
 
@@ -142,6 +145,19 @@ def test_are_functions_equivalent():
     assert not inliner.are_functions_equivalent(a_func, another_func)
 
 
+def test_increment_bytecode():
+    assert inliner.increment_bytecode(b"\x04", 1) == b"\x05"
+    assert inliner.increment_bytecode(b"\x03", 12) == b"\x0f"
+    assert inliner.increment_bytecode(b"R", 2) == b"T"
+
+
+def test_shift_bytecode():
+    bytecode = b"q\x01o\x03p\x10|\x01t\x03r\x01s\x05}\x02"
+    expected_shifted_bytecode = b"q\x03o\x05p\x12|\x01t\x03r\x03s\x07}\x02"
+
+    assert inliner.shift_bytecode(bytecode, 2) == expected_shifted_bytecode
+
+
 def test_pin_arguments():
     def func(a, b):
         c = 4
@@ -172,14 +188,51 @@ def test_inline():
         print(a + " " + b + " " + c)
 
     def func(x, y):
-        z = x + 2 * math.sin(y)
-        return z ** 2
+        try:
+            if x > y:
+                z = x + 2 * math.sin(y)
+                return z ** 2
+            elif x == y:
+                return 4
+            else:
+                return 2 ** 3
+        except ValueError:
+            foo = 0
+            for i in range(4):
+                foo += i
+            return foo
+        except TypeError:
+            return 42
+        else:
+            return 33
+        finally:
+            print("finished")
 
     def target_inlined_func(x, y):
+        # Pinned pre_func
         a = "hello"
         print(a + " " + "pretty" + " " + "world!")
-        z = x + 2 * math.sin(y)
-        return z ** 2
+
+        # func
+        try:
+            if x > y:
+                z = x + 2 * math.sin(y)
+                return z ** 2
+            elif x == y:
+                return 4
+            else:
+                return 2 ** 3
+        except ValueError:
+            foo = 0
+            for i in range(4):
+                foo += i
+            return foo
+        except TypeError:
+            return 42
+        else:
+            return 33
+        finally:
+            print("finished")
 
     inlined_func = inliner.inline(pre_func, func, dict(b="pretty", c="world!"))
 

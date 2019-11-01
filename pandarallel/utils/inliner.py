@@ -1,22 +1,40 @@
 from inspect import signature
 import re
 from types import CodeType, FunctionType
-from typing import Any, Dict, Tuple
+from typing import Any, Dict, Iterable, Tuple
+from itertools import chain
 
 
 class OpCode:
+    JUMP_ABSOLUTE = b"q"
+    JUMP_IF_FALSE_OR_POP = b"o"
+    JUMP_IF_TRUE_OR_POP = b"p"
     LOAD_ATTR = b"j"
     LOAD_CONST = b"d"
     LOAD_FAST = b"|"
     LOAD_GLOBAL = b"t"
     LOAD_METHOD = b"\xa0"
+    POP_JUMP_IF_FALSE = b"r"
+    POP_JUMP_IF_TRUE = b"s"
     RETURN_VALUE = b"S"
     STORE_ATTR = b"_"
     STORE_FAST = b"}"
 
 
+def pairwise(items: Iterable) -> Iterable:
+    """Iterate pairwise.
+
+    Example:
+    tuple(pairwise((3, 4, 5, 6, 7, 8))) == ((3, 4), (5, 6), (7, 8))
+    """
+    iterator = iter(items)
+    for item in iterator:
+        yield item, next(iterator)
+
+
 def multiple_find(bytecode: bytes, sub_bytecode: bytes) -> Tuple[int, ...]:
     """Return list of index where `sub_bytecode` is found in `bytecode`.
+
     Example: With bytecode = b'\x01\x03\x04\x02\x01\x05\x01' and sub_bytecode = b'\x01',
              the expected output is (0, 4, 6)
     """
@@ -217,6 +235,40 @@ def are_functions_equivalent(l_func, r_func):
     return co_code_cond and co_consts_cond and co_names_cond and co_varnames_cond
 
 
+def increment_bytecode(bytecode: bytes, qty: int) -> bytes:
+    """Increment bytecode by qty.
+    qty is a decimal number (and so NOT an hexadecimal number)
+
+    Exemples:
+    increment_bytecode(b'\x04', 1) == b'\x05'
+    increment_bytecode(b'\x03', 12) == b'\x0f'
+    increment_bytecode(b'R', 2) == b'T'
+
+    """
+    return get_bytecode(int.from_bytes(bytecode, "big") + qty)
+
+
+def shift_bytecode(bytecode: bytes, qty: int) -> bytes:
+    """Shift bytecode present just after JUMP_ABSOLUTE, JUMP_IF_FALSE_OR_POP,
+    JUMP_IF_TRUE_OR_POP, POP_JUMP_IF_FALSE & POP_JUMP_IF_TRUE by qty
+    """
+    double_bytes = (
+        (operation, value + qty)
+        if get_bytecode(operation)
+        in (
+            OpCode.JUMP_ABSOLUTE,
+            OpCode.JUMP_IF_FALSE_OR_POP,
+            OpCode.JUMP_IF_TRUE_OR_POP,
+            OpCode.POP_JUMP_IF_FALSE,
+            OpCode.POP_JUMP_IF_TRUE,
+        )
+        else (operation, value)
+        for operation, value in pairwise(bytecode)
+    )
+
+    return bytes(tuple(chain.from_iterable(double_bytes)))
+
+
 def pin_arguments(func: FunctionType, arguments: dict):
     """Transform `func` in a function with no arguments.
 
@@ -375,7 +427,13 @@ def inline(pre_func: FunctionType, func: FunctionType, pre_func_arguments: dict)
     }
 
     pinned_pre_func_co_code = multiple_replace(pinned_pre_func_co_code, transitions)
-    new_co_code = pinned_pre_func_co_code[:-4] + func_co_code
+    pinned_prefunc_code_without_return = pinned_pre_func_co_code[:-4]
+
+    shifted_func_co_code = shift_bytecode(
+        func_co_code, len(pinned_prefunc_code_without_return)
+    )
+
+    new_co_code = pinned_prefunc_code_without_return + shifted_func_co_code
 
     nfcode = new_func.__code__
 
