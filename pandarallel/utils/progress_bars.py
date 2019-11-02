@@ -1,10 +1,6 @@
 import shutil
 import sys
 
-from IPython.display import display
-from ipywidgets import HBox, VBox, IntProgress, Label
-
-
 MINIMUM_TERMINAL_WIDTH = 72
 
 
@@ -73,6 +69,9 @@ class ProgressBarsNotebookLab:
         Positional argument:
         maxs - List containing the max value of each progress bar
         """
+        from IPython.display import display
+        from ipywidgets import HBox, VBox, IntProgress, Label
+
         self.__bars = [
             HBox(
                 [

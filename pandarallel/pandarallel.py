@@ -16,7 +16,6 @@ from pandarallel.data_types.rolling_groupby import RollingGroupBy as RGB
 from pandarallel.data_types.series import Series as S
 from pandarallel.data_types.series_rolling import SeriesRolling as SR
 from pandarallel.utils.inliner import inline
-from pandarallel.utils.progress_bars import ProgressBarsNotebookLab
 
 from time import time
 
@@ -120,7 +119,7 @@ def progress_pre_func(queue, index, counter, progression, state, time):
         delta_t = time_now - state.last_put_time
         delta_i = iteration - state.last_put_iteration
 
-        state.next_put_iteration += int((delta_i / delta_t) * 0.25)
+        state.next_put_iteration += max(int((delta_i / delta_t) * 0.25), 1)
         state.last_put_iteration = iteration
         state.last_put_time = time_now
 
@@ -129,7 +128,7 @@ def progress_wrapper(progress_bar, queue, index, chunk_size):
     counter = count()
     state = ProgressState()
     state.last_put_iteration = 0
-    state.next_put_iteration = chunk_size // 100
+    state.next_put_iteration = max(chunk_size // 100, 1)
     state.last_put_time = time()
 
     def wrapper(func):
@@ -237,6 +236,8 @@ def get_workers_result(
 ):
 
     if show_progress_bar:
+        from pandarallel.utils.progress_bars import ProgressBarsNotebookLab
+
         progress_bars = ProgressBarsNotebookLab(chunk_lengths)
         progresses = [0] * nb_workers
 
