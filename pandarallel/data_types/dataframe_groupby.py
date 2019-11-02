@@ -37,5 +37,7 @@ class DataFrameGroupBy:
             yield [next(iterator) for _ in range(chunk_.stop - chunk_.start)]
 
     @staticmethod
-    def worker(tuples, _1, _2, func, *args, **kwargs):
+    def worker(
+        tuples, _index, _meta_args, _progress_bar, _queue, func, *args, **kwargs
+    ):
         return [func(df, *args, **kwargs) for _, df in tuples]

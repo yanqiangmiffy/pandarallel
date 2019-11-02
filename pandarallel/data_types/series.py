@@ -14,10 +14,14 @@ class Series:
 
     class Apply:
         @staticmethod
-        def worker(series, _1, _2, func, *args, **kwargs):
+        def worker(
+            series, _index, _meta_args, _progress_bar, _queue, func, *args, **kwargs
+        ):
             return series.apply(func, *args, **kwargs)
 
     class Map:
         @staticmethod
-        def worker(series, _1, _2, func, *_, **kwargs):
+        def worker(
+            series, _index, _meta_args, _progress_bar, _queue, func, *_, **kwargs
+        ):
             return series.map(func, **kwargs)

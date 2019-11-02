@@ -22,7 +22,9 @@ class DataFrame:
                 yield df[chunk_]
 
         @staticmethod
-        def worker(df, _1, _2, func, *args, **kwargs):
+        def worker(
+            df, _index, _meta_args, _progress_bar, _queue, func, *args, **kwargs
+        ):
             axis = kwargs.get("axis", 0)
 
             if axis == 1:
@@ -37,5 +39,5 @@ class DataFrame:
                 yield df[chunk_]
 
         @staticmethod
-        def worker(df, _1, _2, func, *_):
+        def worker(df, _index, _meta_args, _progress_bar, _queue, func, *_):
             return df.applymap(func)

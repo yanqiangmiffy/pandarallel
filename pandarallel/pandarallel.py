@@ -16,6 +16,7 @@ from pandarallel.data_types.rolling_groupby import RollingGroupBy as RGB
 from pandarallel.data_types.series import Series as S
 from pandarallel.data_types.series_rolling import SeriesRolling as SR
 from pandarallel.utils.inliner import inline
+from pandarallel.utils.tools import INPUT_FILE_READ, PROGRESSION, VALUE, ERROR
 
 from time import time
 
@@ -26,7 +27,7 @@ PREFIX_OUTPUT = PREFIX + "output_"
 SUFFIX = ".pickle"
 MEMORY_FS_ROOT = "/dev/shm"
 
-INPUT_FILE_READ, PROGRESSION, VALUE, ERROR = list(range(4))
+NO_PROGRESS, PROGRESS_IN_FUNC, PROGRESS_IN_WORKER = list(range(3))
 
 _func = None
 
@@ -60,6 +61,7 @@ def prepare_worker(use_memory_fs):
                     index,
                     meta_args,
                     queue,
+                    progress_bar,
                     dilled_func,
                     args,
                     kwargs,
@@ -70,7 +72,14 @@ def prepare_worker(use_memory_fs):
                         queue.put((INPUT_FILE_READ, index))
 
                     result = function(
-                        data, index, meta_args, dill.loads(dilled_func), *args, **kwargs
+                        data,
+                        index,
+                        meta_args,
+                        queue,
+                        progress_bar,
+                        dill.loads(dilled_func),
+                        *args,
+                        **kwargs
                     )
 
                     with open(output_file_path, "wb") as file:
@@ -82,13 +91,28 @@ def prepare_worker(use_memory_fs):
                     queue.put((ERROR, index))
                     raise
             else:
-                (data, index, meta_args, queue, dilled_func, args, kwargs) = worker_args
+                (
+                    data,
+                    index,
+                    meta_args,
+                    queue,
+                    progress_bar,
+                    dilled_func,
+                    args,
+                    kwargs,
+                ) = worker_args
 
                 try:
                     result = function(
-                        data, index, meta_args, dill.loads(dilled_func), *args, **kwargs
+                        data,
+                        index,
+                        meta_args,
+                        progress_bar,
+                        queue,
+                        dill.loads(dilled_func),
+                        *args,
+                        **kwargs
                     )
-
                     queue.put((VALUE, index))
 
                     return result
@@ -185,8 +209,11 @@ def get_workers_args(
                 index,
                 worker_meta_args,
                 queue,
+                progress_bar == PROGRESS_IN_WORKER,
                 dill.dumps(
-                    progress_wrapper(progress_bar, queue, index, chunk_length)(func)
+                    progress_wrapper(
+                        progress_bar == PROGRESS_IN_FUNC, queue, index, chunk_length
+                    )(func)
                 ),
                 args,
                 kwargs,
@@ -207,10 +234,14 @@ def get_workers_args(
                         index,
                         worker_meta_args,
                         queue,
+                        progress_bar,
                         dill.dumps(
-                            progress_wrapper(progress_bar, queue, index, len(chunk))(
-                                func
-                            )
+                            progress_wrapper(
+                                progress_bar == PROGRESS_IN_FUNC,
+                                queue,
+                                index,
+                                len(chunk),
+                            )(func)
                         ),
                         args,
                         kwargs,
@@ -257,7 +288,6 @@ def get_workers_result(
             progresses[worker_index] = progression
 
             if next(generation) % nb_workers == 0:
-                toto = 1 + 1
                 progress_bars.update(progresses)
 
         elif message_type is VALUE:
@@ -419,34 +449,35 @@ class pandarallel:
 
         nbw = nb_workers
 
-        bargs = (nbw, use_memory_fs, progress_bar)
-        bargs0 = (nbw, use_memory_fs, False)
+        bargs_no_prog = (nbw, use_memory_fs, NO_PROGRESS)
+        bargs_prog_func = (nbw, use_memory_fs, PROGRESS_IN_FUNC)
+        bargs_prog_worker = (nbw, use_memory_fs, PROGRESS_IN_WORKER)
 
         # DataFrame
-        args = bargs + (DF.Apply.get_chunks, DF.Apply.worker, DF.reduce)
+        args = bargs_prog_func + (DF.Apply.get_chunks, DF.Apply.worker, DF.reduce)
         DataFrame.parallel_apply = parallelize(*args)
 
-        args = bargs + (DF.ApplyMap.get_chunks, DF.ApplyMap.worker, DF.reduce)
+        args = bargs_no_prog + (DF.ApplyMap.get_chunks, DF.ApplyMap.worker, DF.reduce)
         DataFrame.parallel_applymap = parallelize(*args)
 
         # Series
-        args = bargs + (S.get_chunks, S.Apply.worker, S.reduce)
+        args = bargs_prog_func + (S.get_chunks, S.Apply.worker, S.reduce)
         Series.parallel_apply = parallelize(*args)
 
-        args = bargs + (S.get_chunks, S.Map.worker, S.reduce)
+        args = bargs_prog_func + (S.get_chunks, S.Map.worker, S.reduce)
         Series.parallel_map = parallelize(*args)
 
         # Series Rolling
-        args = bargs + (SR.get_chunks, SR.worker, SR.reduce)
+        args = bargs_prog_func + (SR.get_chunks, SR.worker, SR.reduce)
         kwargs = dict(get_worker_meta_args=SR.att2value)
         Rolling.parallel_apply = parallelize(*args, **kwargs)
 
         # DataFrame GroupBy
-        args = bargs + (DFGB.get_chunks, DFGB.worker, DFGB.reduce)
+        args = bargs_prog_func + (DFGB.get_chunks, DFGB.worker, DFGB.reduce)
         kwargs = dict(get_reduce_meta_args=DFGB.get_index)
         DataFrameGroupBy.parallel_apply = parallelize(*args, **kwargs)
 
         # Rolling GroupBy
-        args = bargs + (RGB.get_chunks, RGB.worker, RGB.reduce)
+        args = bargs_prog_worker + (RGB.get_chunks, RGB.worker, RGB.reduce)
         kwargs = dict(get_worker_meta_args=SR.att2value)
         RollingGroupby.parallel_apply = parallelize(*args, **kwargs)

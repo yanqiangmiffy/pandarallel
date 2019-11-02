@@ -21,7 +21,9 @@ class SeriesRolling:
         }
 
     @staticmethod
-    def worker(series, index, attribue2value, func, *args, **kwargs):
+    def worker(
+        series, index, attribue2value, _progress_bar, _queue, func, *args, **kwargs
+    ):
         result = series.rolling(**attribue2value).apply(func, *args, **kwargs)
 
         return result if index == 0 else result[attribue2value["window"] :]

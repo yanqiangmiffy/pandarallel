@@ -1,5 +1,7 @@
 import itertools as _itertools
 
+INPUT_FILE_READ, PROGRESSION, VALUE, ERROR = list(range(4))
+
 
 def chunk(nb_item, nb_chunks, start_offset=0):
     """

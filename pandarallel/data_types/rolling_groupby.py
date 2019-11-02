@@ -1,6 +1,6 @@
 import itertools
 import pandas as pd
-from pandarallel.utils.tools import chunk
+from pandarallel.utils.tools import chunk, PROGRESSION
 
 
 class RollingGroupBy:
@@ -23,13 +23,16 @@ class RollingGroupBy:
         }
 
     @staticmethod
-    def worker(tuples, _, attribute2value, func, *args, **kwargs):
+    def worker(
+        tuples, index, attribute2value, progress_bar, queue, func, *args, **kwargs
+    ):
         # TODO: See if this pd.concat is avoidable
         results = []
 
-        for name, df in tuples:
+        for iteration, (name, df) in enumerate(tuples):
             item = df.rolling(**attribute2value).apply(func, *args, **kwargs)
             item.index = pd.MultiIndex.from_product([[name], item.index])
             results.append(item)
+            queue.put_nowait((PROGRESSION, (index, iteration)))
 
         return pd.concat(results)
