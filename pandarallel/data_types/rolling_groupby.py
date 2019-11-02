@@ -24,7 +24,7 @@ class RollingGroupBy:
 
     @staticmethod
     def worker(
-        tuples, index, attribute2value, progress_bar, queue, func, *args, **kwargs
+        tuples, index, attribute2value, queue, progress_bar, func, *args, **kwargs
     ):
         # TODO: See if this pd.concat is avoidable
         results = []
@@ -33,6 +33,8 @@ class RollingGroupBy:
             item = df.rolling(**attribute2value).apply(func, *args, **kwargs)
             item.index = pd.MultiIndex.from_product([[name], item.index])
             results.append(item)
-            queue.put_nowait((PROGRESSION, (index, iteration)))
+
+            if progress_bar:
+                queue.put_nowait((PROGRESSION, (index, iteration)))
 
         return pd.concat(results)

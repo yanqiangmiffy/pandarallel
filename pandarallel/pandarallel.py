@@ -66,6 +66,7 @@ def prepare_worker(use_memory_fs):
                     args,
                     kwargs,
                 ) = worker_args
+
                 try:
                     with open(input_file_path, "rb") as file:
                         data = pickle.load(file)
@@ -107,8 +108,8 @@ def prepare_worker(use_memory_fs):
                         data,
                         index,
                         meta_args,
-                        progress_bar,
                         queue,
+                        progress_bar,
                         dill.loads(dilled_func),
                         *args,
                         **kwargs
@@ -265,7 +266,6 @@ def get_workers_result(
     output_files,
     map_result,
 ):
-
     if show_progress_bar:
         from pandarallel.utils.progress_bars import ProgressBarsNotebookLab
 
@@ -449,9 +449,12 @@ class pandarallel:
 
         nbw = nb_workers
 
+        progress_in_func = PROGRESS_IN_FUNC if progress_bar else False
+        progress_in_worker = PROGRESS_IN_WORKER if progress_bar else False
+
         bargs_no_prog = (nbw, use_memory_fs, NO_PROGRESS)
-        bargs_prog_func = (nbw, use_memory_fs, PROGRESS_IN_FUNC)
-        bargs_prog_worker = (nbw, use_memory_fs, PROGRESS_IN_WORKER)
+        bargs_prog_func = (nbw, use_memory_fs, progress_in_func)
+        bargs_prog_worker = (nbw, use_memory_fs, progress_in_worker)
 
         # DataFrame
         args = bargs_prog_func + (DF.Apply.get_chunks, DF.Apply.worker, DF.reduce)
