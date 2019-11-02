@@ -17,6 +17,7 @@ from pandarallel.data_types.series import Series as S
 from pandarallel.data_types.series_rolling import SeriesRolling as SR
 from pandarallel.utils.inliner import inline
 from pandarallel.utils.tools import INPUT_FILE_READ, PROGRESSION, VALUE, ERROR
+from pandarallel.utils.progress_bars import get_progress_bars
 
 from time import time
 
@@ -267,9 +268,7 @@ def get_workers_result(
     map_result,
 ):
     if show_progress_bar:
-        from pandarallel.utils.progress_bars import ProgressBarsNotebookLab
-
-        progress_bars = ProgressBarsNotebookLab(chunk_lengths)
+        progress_bars = get_progress_bars(chunk_lengths)
         progresses = [0] * nb_workers
 
     finished_workers = [False] * nb_workers

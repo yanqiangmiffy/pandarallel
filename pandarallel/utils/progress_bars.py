@@ -4,6 +4,31 @@ import sys
 MINIMUM_TERMINAL_WIDTH = 72
 
 
+def is_notebook_lab():
+    try:
+        shell = get_ipython().__class__.__name__
+        if shell == "ZMQInteractiveShell":
+            # Jupyter notebook/lab or qtconsole
+            return True
+        elif shell == "TerminalInteractiveShell":
+            # Terminal running IPython
+            return False
+        else:
+            # Other type (?)
+            return False
+    except NameError:
+        # Probably standard Python interpreter
+        return False
+
+
+def get_progress_bars(maxs):
+    return (
+        ProgressBarsNotebookLab(maxs)
+        if is_notebook_lab()
+        else ProgressBarsConsole(maxs)
+    )
+
+
 class ProgressBarsConsole:
     def __init__(self, maxs):
         self.__bars = [[0, max] for max in maxs]
