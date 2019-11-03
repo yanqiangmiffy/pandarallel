@@ -291,7 +291,7 @@ def pin_arguments(func: FunctionType, arguments: dict):
     This function is in some ways equivalent to functools.partials but with a faster
     runtime.
 
-    `arguments` keys should be identical as `func` arguments names else a Type is
+    `arguments` keys should be identical as `func` arguments names else a TypeError is
     raised.
     """
 

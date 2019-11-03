@@ -20,7 +20,7 @@ def progress_bar(request):
     return request.param
 
 
-@pytest.fixture(params=(None, False, True))
+@pytest.fixture(params=(None, False))
 def use_memory_fs(request):
     return request.param
 

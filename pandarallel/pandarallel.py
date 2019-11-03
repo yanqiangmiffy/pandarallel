@@ -3,7 +3,6 @@ import pickle
 from itertools import count
 from multiprocessing import Manager, Pool, cpu_count
 from tempfile import NamedTemporaryFile
-from types import CodeType, FunctionType
 
 import dill
 from pandas import DataFrame, Series
@@ -28,7 +27,7 @@ PREFIX_OUTPUT = PREFIX + "output_"
 SUFFIX = ".pickle"
 MEMORY_FS_ROOT = "/dev/shm"
 
-NO_PROGRESS, PROGRESS_IN_FUNC, PROGRESS_IN_WORKER = list(range(3))
+NO_PROGRESS, PROGRESS_IN_WORKER, PROGRESS_IN_FUNC, PROGRESS_IN_FUNC_MUL = list(range(4))
 
 _func = None
 
@@ -214,7 +213,7 @@ def get_workers_args(
                 progress_bar == PROGRESS_IN_WORKER,
                 dill.dumps(
                     progress_wrapper(
-                        progress_bar == PROGRESS_IN_FUNC, queue, index, chunk_length
+                        progress_bar >= PROGRESS_IN_FUNC, queue, index, chunk_length
                     )(func)
                 ),
                 args,
@@ -261,6 +260,7 @@ def get_workers_result(
     use_memory_fs,
     nb_workers,
     show_progress_bar,
+    nb_columns,
     queue,
     chunk_lengths,
     input_files,
@@ -268,7 +268,13 @@ def get_workers_result(
     map_result,
 ):
     if show_progress_bar:
+        if show_progress_bar == PROGRESS_IN_FUNC_MUL:
+            chunk_lengths = [
+                chunk_length * (nb_columns + 1) for chunk_length in chunk_lengths
+            ]
+
         progress_bars = get_progress_bars(chunk_lengths)
+
         progresses = [0] * nb_workers
 
     finished_workers = [False] * nb_workers
@@ -326,6 +332,7 @@ def parallelize(
 ):
     def closure(data, func, *args, **kwargs):
         chunks = get_chunks(nb_workers, data, *args, **kwargs)
+        nb_columns = len(data.columns) if progress_bar == PROGRESS_IN_FUNC_MUL else None
         worker_meta_args = get_worker_meta_args(data)
         reduce_meta_args = get_reduce_meta_args(data)
         manager = Manager()
@@ -353,6 +360,7 @@ def parallelize(
                 use_memory_fs,
                 nb_workers,
                 progress_bar,
+                nb_columns,
                 queue,
                 chunk_lengths,
                 input_files,
@@ -448,18 +456,25 @@ class pandarallel:
 
         nbw = nb_workers
 
-        progress_in_func = PROGRESS_IN_FUNC if progress_bar else False
-        progress_in_worker = PROGRESS_IN_WORKER if progress_bar else False
+        progress_in_func = PROGRESS_IN_FUNC * progress_bar
+        progress_in_func_mul = PROGRESS_IN_FUNC_MUL * progress_bar
+        progress_in_worker = PROGRESS_IN_WORKER * progress_bar
 
-        bargs_no_prog = (nbw, use_memory_fs, NO_PROGRESS)
         bargs_prog_func = (nbw, use_memory_fs, progress_in_func)
+        bargs_prog_func_mul = (nbw, use_memory_fs, progress_in_func_mul)
+
         bargs_prog_worker = (nbw, use_memory_fs, progress_in_worker)
 
         # DataFrame
         args = bargs_prog_func + (DF.Apply.get_chunks, DF.Apply.worker, DF.reduce)
         DataFrame.parallel_apply = parallelize(*args)
 
-        args = bargs_no_prog + (DF.ApplyMap.get_chunks, DF.ApplyMap.worker, DF.reduce)
+        args = bargs_prog_func_mul + (
+            DF.ApplyMap.get_chunks,
+            DF.ApplyMap.worker,
+            DF.reduce,
+        )
+
         DataFrame.parallel_applymap = parallelize(*args)
 
         # Series
