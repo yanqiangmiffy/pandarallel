@@ -1,11 +1,11 @@
+import math
+import sys
+
 import pytest
 
 from pandarallel.utils import inliner
-import math
+from types import CodeType, FunctionType
 
-
-def test_pairwise():
-    assert tuple(inliner.pairwise((3, 4, 5, 6, 7, 8))) == ((3, 4), (5, 6), (7, 8))
 
 def test_multiple_find():
     bytecode = b"\x01\x03\x04\x02\x01\x05\x01"
@@ -30,23 +30,36 @@ def test_remove_duplicates():
     assert inliner.remove_duplicates(tuple_) == expected_output
 
 
-def test_get_hex():
-    with pytest.raises(ValueError):
-        inliner.get_hex(-1)
+def test_get_instructions_tuples():
+    def function(x, y):
+        print(x, y)
 
-    assert inliner.get_hex(3) == "03"
-    assert inliner.get_hex(16) == "10"
-    assert inliner.get_hex(1000) == "03e8"
+    python_version = sys.version_info
 
-
-def test_get_bytecode():
-    with pytest.raises(ValueError):
-        inliner.get_bytecode(-1)
-
-    assert inliner.get_bytecode(0) == b"\x00"
-    assert inliner.get_bytecode(5) == b"\x05"
-    assert inliner.get_bytecode(10) == b"\x0A"
-    assert inliner.get_bytecode(255) == b"\xFF"
+    if python_version.major == 3:
+        if python_version.minor == 5:
+            assert tuple(inliner.get_instructions_tuples(function)) == (
+                b"t\x00\x00",
+                b"|\x00\x00",
+                b"|\x01\x00",
+                b"\x83\x02\x00",
+                b"\x01",
+                b"d\x00\x00",
+                b"S",
+            )
+        elif python_version.minor in (6, 7):
+            assert tuple(inliner.get_instructions_tuples(function)) == (
+                b"t\x00",
+                b"|\x00",
+                b"|\x01",
+                b"\x83\x02",
+                b"\x01\x00",
+                b"d\x00",
+                b"S\x00",
+            )
+    else:
+        with pytest.raises(SystemError):
+            inliner.get_instructions_offsets(function)
 
 
 def test_has_no_return():
@@ -145,17 +158,117 @@ def test_are_functions_equivalent():
     assert not inliner.are_functions_equivalent(a_func, another_func)
 
 
-def test_increment_bytecode():
-    assert inliner.increment_bytecode(b"\x04", 1) == b"\x05"
-    assert inliner.increment_bytecode(b"\x03", 12) == b"\x0f"
-    assert inliner.increment_bytecode(b"R", 2) == b"T"
+def test_get_shifted_bytecode():
 
+    # TODO: Test also JUMP_IF_TRUE_OR_POP
+    def func(x, y):
+        if x > y:
+            pass
+        else:
+            pass
 
-def test_shift_bytecode():
-    bytecode = b"q\x01o\x03p\x10|\x01t\x03r\x01s\x05}\x02"
-    expected_shifted_bytecode = b"q\x03o\x05p\x12|\x01t\x03r\x03s\x07}\x02"
+        if not x > y:
+            pass
 
-    assert inliner.shift_bytecode(bytecode, 2) == expected_shifted_bytecode
+        0 < 0 == 0
+
+        for i in range(42):
+            pass
+
+    python_version = sys.version_info
+
+    if python_version.major == 3:
+        if python_version.minor == 5:
+            bytecode = b"".join(
+                (
+                    b"|\x00\x00",
+                    b"|\x01\x00",
+                    b"k\x04\x00",
+                    # JUMP_POP_IF_FALSE
+                    b"r\x0f\x00",
+                    b"n\x00\x00",
+                    b"|\x00\x00",
+                    b"|\x01\x00",
+                    b"k\x04\x00",
+                    # JUMP_POP_IF_TRUE
+                    b"s\x1b\x00",
+                    b"d\x01\x00",
+                    b"d\x01\x00",
+                    b"\x04",
+                    b"\x03",
+                    b"k\x00\x00",
+                    # JUMP_IF_FALSE_OR_POP
+                    b"o2\x00",
+                    b"d\x01\x00",
+                    b"k\x02\x00" b"n\x02\x00",
+                    b"\x02",
+                    b"\x01",
+                    b"\x01",
+                    b"x\x14\x00",
+                    b"t\x00\x00",
+                    b"d\x02\x00",
+                    b"\x83\x01\x00",
+                    b"D",
+                    b"]\x06\x00",
+                    b"}\x02\x00",
+                    # JUMP_ABSOLUTE
+                    b"qB\x00",
+                    b"W",
+                    b"d\x00\x00",
+                    b"S",
+                )
+            )
+
+            expected_shifted_bytecode = b"".join(
+                (
+                    b"|\x00\x00",
+                    b"|\x01\x00",
+                    b"k\x04\x00",
+                    # JUMP_POP_IF_FALSE
+                    b"r\x11\x00",
+                    b"n\x00\x00",
+                    b"|\x00\x00",
+                    b"|\x01\x00",
+                    b"k\x04\x00",
+                    # JUMP_POP_IF_TRUE
+                    b"s\x1d\x00",
+                    b"d\x01\x00",
+                    b"d\x01\x00",
+                    b"\x04",
+                    b"\x03",
+                    b"k\x00\x00",
+                    # JUMP_IF_FALSE_OR_POP
+                    b"o4\x00",
+                    b"d\x01\x00",
+                    b"k\x02\x00" b"n\x02\x00",
+                    b"\x02",
+                    b"\x01",
+                    b"\x01",
+                    b"x\x14\x00",
+                    b"t\x00\x00",
+                    b"d\x02\x00",
+                    b"\x83\x01\x00",
+                    b"D",
+                    b"]\x06\x00",
+                    b"}\x02\x00",
+                    # JUMP_ABSOLUTE
+                    b"qD\x00",
+                    b"W",
+                    b"d\x00\x00",
+                    b"S",
+                )
+            )
+
+            assert bytecode == func.__code__.co_code
+            assert inliner.get_shifted_bytecode(func, 2) == expected_shifted_bytecode
+
+        elif python_version.minor in (6, 7):
+            pass
+    else:
+        with pytest.raises(SystemError):
+            inliner.get_instructions_offsets(function)
+
+    # assert inliner.get_shifted_bytecode(test_func, 2) == expected_shifted_bytecode
 
 
 def test_pin_arguments():

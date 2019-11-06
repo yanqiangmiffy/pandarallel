@@ -1,8 +1,10 @@
-from inspect import signature
+import dis
 import re
+import sys
+from inspect import signature
+from itertools import chain, tee
 from types import CodeType, FunctionType
 from typing import Any, Dict, Iterable, Tuple
-from itertools import chain
 
 
 class OpCode:
@@ -19,17 +21,6 @@ class OpCode:
     RETURN_VALUE = b"S"
     STORE_ATTR = b"_"
     STORE_FAST = b"}"
-
-
-def pairwise(items: Iterable) -> Iterable:
-    """Iterate pairwise.
-
-    Example:
-    tuple(pairwise((3, 4, 5, 6, 7, 8))) == ((3, 4), (5, 6), (7, 8))
-    """
-    iterator = iter(items)
-    for item in iterator:
-        yield item, next(iterator)
 
 
 def multiple_find(bytecode: bytes, sub_bytecode: bytes) -> Tuple[int, ...]:
@@ -68,42 +59,65 @@ def remove_duplicates(tuple_: Tuple[Any, ...]) -> Tuple[Any, ...]:
     return tuple(sorted(set(tuple_), key=tuple_.index))
 
 
-def get_hex(number: int) -> str:
-    """Convert decimal number to hex string with pre-0 if the lenght of the hex string
-    is odd.
+def get_instructions_tuples(func: FunctionType) -> Iterable[bytes]:
+    """Return a list of bytes where each item of a list correspond to an instruction.
+    Only valid for Python 3.{5, 6, 7}
 
-    Examples: get_hex(3) == "03"
-              get_hex(16) == "10"
-              get_hex(1000) = "03e8"
+    Exemple:
+    def function(x, y):
+        print(x, y)
 
-    If `number` is negative, raise a ValueError.
+    With Python 3.5, corresponding pretty bytecode is:
+    1           0 LOAD_GLOBAL              0 (print)
+                3 LOAD_FAST                0 (x)
+                6 LOAD_FAST                1 (y)
+                9 CALL_FUNCTION            2 (2 positional, 0 keyword pair)
+               12 POP_TOP
+               13 LOAD_CONST               0 (None)
+               16 RETURN_VALUE
+
+    Corresponding bytecode is: b't\x00\x00|\x00\x00|\x01\x00\x83\x02\x00\x01d\x00\x00S'
+
+    tuple(get_instructions_tuples(function)) = (b't\x00\x00', b'|\x00\x00',
+                                                b'|\x01\x00', b'\x83\x02\x00', b'\x01',
+                                                b'd\x00\x00', b'S')
+
+    With Python 3.6 & 3.7, corresponding bytecode is:
+    1           0 LOAD_GLOBAL              0 (print)
+                2 LOAD_FAST                0 (x)
+                4 LOAD_FAST                1 (y)
+                6 CALL_FUNCTION            2
+                8 POP_TOP
+               10 LOAD_CONST               0 (None)
+               12 RETURN_VALUE
+
+    Corresponding bytecode is: b't\x00|\x00|\x01\x83\x02\x01\x00d\x00S\x00'
+
+    tuple(get_instructions_tuples(function)) = (b't\x00', b'|\x00', b'|\x01',
+                                                b'\x83\x02', b'\x01\x00', b'd\x00',
+                                                b'S\x00')
+
+    If Python version not in 3.{5, 6, 7}, a SystemError is raised.
     """
-    if number < 0:
-        raise ValueError("`number` is negative")
 
-    hex_number = hex(number)[2:]
+    def pairwise(iterable):
+        """s -> (s0,s1), (s1,s2), (s2, s3), ..."""
+        a, b = tee(iterable)
+        next(b, None)
+        return zip(a, b)
 
-    if len(hex_number) % 2 != 0:
-        return "0{}".format(hex_number)
+    python_version = sys.version_info
+    if not (python_version.major == 3 and python_version.minor in (5, 6, 7)):
+        raise SystemError("Python version should be 3.5, 3.6 or 3.7")
 
-    return hex_number
+    func_co_code = func.__code__.co_code
+    len_bytecode = len(func_co_code)
 
+    instructions_offsets = tuple(instr.offset for instr in dis.Bytecode(func)) + (
+        len_bytecode,
+    )
 
-def get_bytecode(number: int) -> bytes:
-    """Convert integer to bytecode.
-    If `number` < 0 raise a ValueError.
-
-    Examples:
-    get_bytecode(3) == b'\x03'
-    get_bytecode(10) == b'\x0A'
-    get_bytecode(42) == b'\x2A'
-    """
-    if number < 0:
-        raise ValueError("`number` is negative")
-
-    hex_number = get_hex(number)
-
-    return bytes.fromhex(hex_number)
+    return (func_co_code[start:stop] for start, stop in pairwise(instructions_offsets))
 
 
 def has_no_return(func: FunctionType) -> bool:
@@ -114,14 +128,12 @@ def has_no_return(func: FunctionType) -> bool:
     co_code = code.co_code
     co_consts = code.co_consts
 
-    load_const_none = OpCode.LOAD_CONST + get_bytecode(co_consts.index(None))
+    instructions_tuples = tuple(get_instructions_tuples(func))
+    return_offsets = multiple_find(co_code, OpCode.RETURN_VALUE)
 
-    return_indexes = multiple_find(co_code, OpCode.RETURN_VALUE)
+    load_const_none = OpCode.LOAD_CONST + bytes((co_consts.index(None),))
 
-    return (
-        len(return_indexes) == 1
-        and co_code[return_indexes[0] - 2 : return_indexes[0]] == load_const_none
-    )
+    return len(return_offsets) == 1 and instructions_tuples[-2][0:2] == load_const_none
 
 
 def has_duplicates(tuple_: Tuple):
@@ -144,7 +156,7 @@ def key2value(sources: Tuple, dests: Tuple, source2dest: Dict) -> Tuple:
     source2dest = {"b": 55, "hello": "world"}
 
     key2value(sources, dests, source2dest) = (("a", "d"),
-                                              (54, "e", 2, 55, "world),
+                                              (54, "e", 2, 55, "world"),
                                               {"1": "3", "3": "4"})
 
     `sources` and `dests` should not have duplicate items, else a ValueError is raided.
@@ -202,7 +214,7 @@ def get_b_transitions(
     transitions: Dict[int, int], byte_source: bytes, byte_dest: bytes
 ):
     return {
-        byte_source + get_bytecode(key): byte_dest + get_bytecode(value)
+        byte_source + bytes([key]): byte_dest + bytes((value,))
         for key, value in transitions.items()
     }
 
@@ -235,26 +247,35 @@ def are_functions_equivalent(l_func, r_func):
     return co_code_cond and co_consts_cond and co_names_cond and co_varnames_cond
 
 
-def increment_bytecode(bytecode: bytes, qty: int) -> bytes:
-    """Increment bytecode by qty.
-    qty is a decimal number (and so NOT an hexadecimal number)
+# def increment_bytecode(bytecode: bytes, qty: int) -> bytes:
+#     """Increment bytecode by qty.
+#     qty is a decimal number (and so NOT an hexadecimal number)
 
-    Exemples:
-    increment_bytecode(b'\x04', 1) == b'\x05'
-    increment_bytecode(b'\x03', 12) == b'\x0f'
-    increment_bytecode(b'R', 2) == b'T'
+#     Exemples:
+#     increment_bytecode(b'\x04', 1) == b'\x05'
+#     increment_bytecode(b'\x03', 12) == b'\x0f'
+#     increment_bytecode(b'R', 2) == b'T'
 
-    """
-    return get_bytecode(int.from_bytes(bytecode, "big") + qty)
+#     """
+#     return bytes([int.from_bytes(bytecode, "big") + qty])
 
 
-def shift_bytecode(bytecode: bytes, qty: int) -> bytes:
+def get_shifted_bytecode(func: FunctionType, qty: int) -> bytes:
     """Shift bytecode present just after JUMP_ABSOLUTE, JUMP_IF_FALSE_OR_POP,
     JUMP_IF_TRUE_OR_POP, POP_JUMP_IF_FALSE & POP_JUMP_IF_TRUE by qty
     """
-    double_bytes = (
-        (operation, value + qty)
-        if get_bytecode(operation)
+    new_instructions_tuples = tuple(
+        bytes(
+            (
+                operation,
+                *tuple(
+                    int.to_bytes(
+                        int.from_bytes(bytes(value), "little") + qty, 2, "little"
+                    )
+                ),
+            )
+        )
+        if bytes((operation,))
         in (
             OpCode.JUMP_ABSOLUTE,
             OpCode.JUMP_IF_FALSE_OR_POP,
@@ -262,11 +283,11 @@ def shift_bytecode(bytecode: bytes, qty: int) -> bytes:
             OpCode.POP_JUMP_IF_FALSE,
             OpCode.POP_JUMP_IF_TRUE,
         )
-        else (operation, value)
-        for operation, value in pairwise(bytecode)
+        else bytes((operation, *value))
+        for operation, *value in get_instructions_tuples(func)
     )
 
-    return bytes(tuple(chain.from_iterable(double_bytes)))
+    return bytes(tuple(chain.from_iterable(new_instructions_tuples)))
 
 
 def pin_arguments(func: FunctionType, arguments: dict):
@@ -394,8 +415,11 @@ def inline(pre_func: FunctionType, func: FunctionType, pre_func_arguments: dict)
     if not has_no_return(pre_func):
         raise ValueError("`pre_func` returns something")
 
-    pinned_pre_func = pin_arguments(pre_func, pre_func_arguments)
+    prefunc_co_code_without_return = tuple(
+        chain.from_iterable(tuple(get_instructions_tuples(pre_func))[:-2])
+    )
 
+    pinned_pre_func = pin_arguments(pre_func, pre_func_arguments)
     pinned_pre_func_code = pinned_pre_func.__code__
     pinned_pre_func_co_code = pinned_pre_func_code.co_code
     pinned_pre_func_co_consts = pinned_pre_func_code.co_consts
@@ -403,7 +427,7 @@ def inline(pre_func: FunctionType, func: FunctionType, pre_func_arguments: dict)
     pinned_pre_func_co_varnames = pinned_pre_func_code.co_varnames
 
     func_code = func.__code__
-    func_co_code = func_code.co_code
+    func_co_code = get_shifted_bytecode(func, len(prefunc_co_code_without_return))
     func_co_consts = func_code.co_consts
     func_co_names = func_code.co_names
     func_co_varnames = func_code.co_varnames
@@ -426,14 +450,16 @@ def inline(pre_func: FunctionType, func: FunctionType, pre_func_arguments: dict)
         **get_b_transitions(trans_co_varnames, OpCode.STORE_FAST, OpCode.STORE_FAST),
     }
 
+    import ipdb
+
+    ipdb.set_trace()
     pinned_pre_func_co_code = multiple_replace(pinned_pre_func_co_code, transitions)
-    pinned_prefunc_code_without_return = pinned_pre_func_co_code[:-4]
 
-    shifted_func_co_code = shift_bytecode(
-        func_co_code, len(pinned_prefunc_code_without_return)
-    )
+    pinned_prefunc_co_code_without_return = pinned_pre_func_co_code[
+        : len(prefunc_co_code_without_return)
+    ]
 
-    new_co_code = pinned_prefunc_code_without_return + shifted_func_co_code
+    new_co_code = pinned_prefunc_co_code_without_return + func_co_code
 
     nfcode = new_func.__code__
 
